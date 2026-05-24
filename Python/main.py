@@ -3,7 +3,11 @@ import os
 import re
 
 from ollama import chat
-from tools.file_tools import read_file, write_file
+from tools.file_tools import (
+    read_file,
+    write_file,
+    list_files
+)
 
 MEMORY_FILE = "memory.json"
 
@@ -38,6 +42,10 @@ Gunakan nama file yang sesuai.
 
 Jangan jelaskan penggunaan tools.
 Gunakan tools jika diperlukan.
+
+3. list_files(path)
+Untuk melihat struktur file project.
+[LIST_FILES path="."]
 """
 }
 
@@ -131,6 +139,41 @@ Isi file {filepath}:
 
 {result}
 """
+            })
+
+            continue
+
+        # =========================
+        # LIST FILES TOOL
+        # =========================
+
+        list_match = re.search(
+            r'\[LIST_FILES path="(.*?)"\]',
+            ai
+        )
+
+        if list_match:
+
+            tool_used = True
+
+            path = list_match.group(1)
+
+            result = list_files(path)
+
+            print(f"\nSYSTEM: Melihat struktur folder {path}\n")
+
+            messages.append({
+                "role": "assistant",
+                "content": ai
+            })
+
+            messages.append({
+                "role": "user",
+                "content": f"""
+        Struktur file:
+
+        {result[:5000]}
+        """
             })
 
             continue
