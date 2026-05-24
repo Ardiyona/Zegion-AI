@@ -6,7 +6,8 @@ from ollama import chat
 from tools.file_tools import (
     read_file,
     write_file,
-    list_files
+    list_files,
+    search_in_files
 )
 
 MEMORY_FILE = "memory.json"
@@ -46,6 +47,13 @@ Gunakan tools jika diperlukan.
 3. list_files(path)
 Untuk melihat struktur file project.
 [LIST_FILES path="."]
+
+4. search_in_files(keyword, path)
+Untuk mencari keyword dalam project.
+
+Jika perlu mencari keyword gunakan format:
+
+[SEARCH keyword="login" path="."]
 """
 }
 
@@ -96,7 +104,7 @@ while True:
     for _ in range(MAX_ITERATIONS):
 
         response = chat(
-            model="qwen3:8b",
+            model="qwen3:4b",
             messages=messages
         )
 
@@ -135,10 +143,10 @@ while True:
             messages.append({
                 "role": "user",
                 "content": f"""
-Isi file {filepath}:
+                Isi file {filepath}:
 
-{result}
-"""
+                {result}
+                """
             })
 
             continue
@@ -173,6 +181,42 @@ Isi file {filepath}:
         Struktur file:
 
         {result[:5000]}
+        """
+            })
+
+            continue
+
+        # =========================
+        # SEARCH TOOL
+        # =========================
+
+        search_match = re.search(
+            r'\[SEARCH keyword="(.*?)" path="(.*?)"\]',
+            ai
+        )
+
+        if search_match:
+
+            tool_used = True
+
+            keyword = search_match.group(1)
+            path = search_match.group(2)
+
+            result = search_in_files(keyword, path)
+
+            print(f"\nSYSTEM: Mencari '{keyword}' di {path}\n")
+
+            messages.append({
+                "role": "assistant",
+                "content": ai
+            })
+
+            messages.append({
+                "role": "user",
+                "content": f"""
+        Hasil pencarian keyword '{keyword}':
+
+        {result}
         """
             })
 
