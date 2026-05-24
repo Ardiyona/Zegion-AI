@@ -1,0 +1,197 @@
+import json
+import os
+import re
+
+from ollama import chat
+from tools.file_tools import read_file, write_file
+
+MEMORY_FILE = "memory.json"
+
+# =========================
+# SYSTEM PROMPT
+# =========================
+
+system_prompt = {
+    "role": "system",
+    "content": """
+Kamu adalah AI assistant lokal.
+
+Kamu memiliki tools:
+
+1. read_file(path)
+Untuk membaca file.
+
+2. write_file(path, content)
+Untuk membuat atau mengubah file.
+
+Jika perlu membaca file gunakan format:
+
+[READ_FILE path="main.py"]
+
+Jika perlu membuat atau mengubah file gunakan format:
+
+[WRITE_FILE path="hello.py"]
+print("Hello World")
+[/WRITE_FILE]
+
+Gunakan nama file yang sesuai.
+
+Jangan jelaskan penggunaan tools.
+Gunakan tools jika diperlukan.
+"""
+}
+
+# =========================
+# LOAD MEMORY
+# =========================
+
+if os.path.exists(MEMORY_FILE):
+
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            messages = json.load(f)
+
+    except:
+        messages = [system_prompt]
+
+else:
+    messages = [system_prompt]
+
+print("AI Local Siap 😼")
+print("Ketik 'exit' untuk keluar.\n")
+
+# =========================
+# MAIN LOOP
+# =========================
+
+while True:
+
+    user = input("You: ")
+
+    if user.lower() == "exit":
+        break
+
+    # Tambahkan user message
+    messages.append({
+        "role": "user",
+        "content": user
+    })
+
+    # =========================
+    # MULTI STEP AGENT LOOP
+    # =========================
+
+    MAX_ITERATIONS = 5
+
+    ai = ""
+
+    for _ in range(MAX_ITERATIONS):
+
+        response = chat(
+            model="qwen3:8b",
+            messages=messages
+        )
+
+        ai = response["message"]["content"]
+
+        print("\nAI THINKING:")
+        print(ai)
+        print()
+
+        tool_used = False
+
+        # =========================
+        # READ FILE TOOL
+        # =========================
+
+        read_match = re.search(
+            r'\[READ_FILE path="(.*?)"\]',
+            ai
+        )
+
+        if read_match:
+
+            tool_used = True
+
+            filepath = read_match.group(1)
+
+            result = read_file(filepath)
+
+            print(f"\nSYSTEM: Membaca file {filepath}\n")
+
+            messages.append({
+                "role": "assistant",
+                "content": ai
+            })
+
+            messages.append({
+                "role": "user",
+                "content": f"""
+Isi file {filepath}:
+
+{result}
+"""
+            })
+
+            continue
+
+        # =========================
+        # WRITE FILE TOOL
+        # =========================
+
+        write_match = re.search(
+            r'\[WRITE_FILE path="(.*?)"\](.*?)\[/WRITE_FILE\]',
+            ai,
+            re.DOTALL
+        )
+
+        if write_match:
+
+            tool_used = True
+
+            filepath = write_match.group(1)
+            content = write_match.group(2).strip()
+
+            result = write_file(filepath, content)
+
+            print(f"\nSYSTEM: {result}\n")
+
+            messages.append({
+                "role": "assistant",
+                "content": ai
+            })
+
+            messages.append({
+                "role": "user",
+                "content": result
+            })
+
+            continue
+
+        # Kalau tidak ada tool dipakai
+        if not tool_used:
+            break
+
+    # =========================
+    # SIMPAN FINAL RESPONSE
+    # =========================
+
+    messages.append({
+        "role": "assistant",
+        "content": ai
+    })
+
+    # =========================
+    # FINAL OUTPUT
+    # =========================
+
+    print("\nAI FINAL:")
+    print(ai)
+    print()
+
+    # =========================
+    # SAVE MEMORY
+    # =========================
+
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(messages, f, ensure_ascii=False, indent=2)
