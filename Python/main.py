@@ -7,7 +7,8 @@ from tools.file_tools import (
     read_file,
     write_file,
     list_files,
-    search_in_files
+    search_in_files,
+    execute_python
 )
 
 MEMORY_FILE = "memory.json"
@@ -21,39 +22,31 @@ system_prompt = {
     "content": """
 Kamu adalah AI assistant lokal.
 
-Kamu memiliki tools:
+Kamu memiliki tools berikut. WAJIB gunakan format PERSIS seperti di bawah:
 
-1. read_file(path)
-Untuk membaca file.
+1. READ FILE:
+[READ_FILE path="nama_file.py"]
 
-2. write_file(path, content)
-Untuk membuat atau mengubah file.
-
-Jika perlu membaca file gunakan format:
-
-[READ_FILE path="main.py"]
-
-Jika perlu membuat atau mengubah file gunakan format:
-
-[WRITE_FILE path="hello.py"]
-print("Hello World")
+2. WRITE FILE:
+[WRITE_FILE path="nama_file.py"]
+isi konten file di sini
 [/WRITE_FILE]
 
-Gunakan nama file yang sesuai.
-
-Jangan jelaskan penggunaan tools.
-Gunakan tools jika diperlukan.
-
-3. list_files(path)
-Untuk melihat struktur file project.
+3. LIST FILES:
 [LIST_FILES path="."]
 
-4. search_in_files(keyword, path)
-Untuk mencari keyword dalam project.
+4. SEARCH:
+[SEARCH keyword="kata" path="."]
 
-Jika perlu mencari keyword gunakan format:
+5. EXECUTE PYTHON:
+[EXECUTE path="nama_file.py"]
 
-[SEARCH keyword="login" path="."]
+ATURAN:
+- Lakukan SATU langkah per respons. Jangan gabungkan beberapa tool.
+- Setelah WRITE_FILE → wajib EXECUTE di respons berikutnya.
+- Jika STATUS: ERROR → perbaiki file lalu EXECUTE lagi.
+- Gunakan [TASK_COMPLETE] hanya jika STATUS: SUCCESS.
+- JANGAN gunakan format lain selain yang tertulis di atas.
 """
 }
 
@@ -97,11 +90,12 @@ while True:
     # MULTI STEP AGENT LOOP
     # =========================
 
-    MAX_ITERATIONS = 5
+    MAX_ITERATIONS = 10  # naikin sedikit biar cukup
 
     ai = ""
+    last_thinking = ""  # ← tracking AI THINKING terakhir
 
-    for _ in range(MAX_ITERATIONS):
+    for step in range(MAX_ITERATIONS):
 
         response = chat(
             model="qwen3:4b",
@@ -109,153 +103,100 @@ while True:
         )
 
         ai = response["message"]["content"]
-
-        print("\nAI THINKING:")
-        print(ai)
-        print()
+        print(f"\n[DEBUG] Raw AI response:\n{ai}\n")
 
         tool_used = False
 
-        # =========================
-        # READ FILE TOOL
-        # =========================
-
-        read_match = re.search(
-            r'\[READ_FILE path="(.*?)"\]',
-            ai
-        )
-
+        # ── READ FILE ──────────────────────────────────────────
+        read_match = re.search(r'\[READ_FILE path="(.*?)"\]', ai)
         if read_match:
-
             tool_used = True
-
             filepath = read_match.group(1)
-
             result = read_file(filepath)
-
-            print(f"\nSYSTEM: Membaca file {filepath}\n")
-
-            messages.append({
-                "role": "assistant",
-                "content": ai
-            })
-
-            messages.append({
-                "role": "user",
-                "content": f"""
-                Isi file {filepath}:
-
-                {result}
-                """
-            })
-
+            print(f"\n[TOOL] READ_FILE → {filepath}")
+            print(f"AI THINKING:\n{ai}\n")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Isi file {filepath}:\n\n{result}"})
             continue
 
-        # =========================
-        # LIST FILES TOOL
-        # =========================
-
-        list_match = re.search(
-            r'\[LIST_FILES path="(.*?)"\]',
-            ai
-        )
-
+        # ── LIST FILES ─────────────────────────────────────────
+        list_match = re.search(r'\[LIST_FILES path="(.*?)"\]', ai)
         if list_match:
-
             tool_used = True
-
             path = list_match.group(1)
-
             result = list_files(path)
-
-            print(f"\nSYSTEM: Melihat struktur folder {path}\n")
-
-            messages.append({
-                "role": "assistant",
-                "content": ai
-            })
-
-            messages.append({
-                "role": "user",
-                "content": f"""
-        Struktur file:
-
-        {result[:5000]}
-        """
-            })
-
+            print(f"\n[TOOL] LIST_FILES → {path}")
+            print(f"AI THINKING:\n{ai}\n")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Struktur file:\n\n{result[:5000]}"})
             continue
 
-        # =========================
-        # SEARCH TOOL
-        # =========================
-
-        search_match = re.search(
-            r'\[SEARCH keyword="(.*?)" path="(.*?)"\]',
-            ai
-        )
-
+        # ── SEARCH ────────────────────────────────────────────
+        search_match = re.search(r'\[SEARCH keyword="(.*?)" path="(.*?)"\]', ai)
         if search_match:
-
             tool_used = True
-
             keyword = search_match.group(1)
             path = search_match.group(2)
-
             result = search_in_files(keyword, path)
-
-            print(f"\nSYSTEM: Mencari '{keyword}' di {path}\n")
-
-            messages.append({
-                "role": "assistant",
-                "content": ai
-            })
-
-            messages.append({
-                "role": "user",
-                "content": f"""
-        Hasil pencarian keyword '{keyword}':
-
-        {result}
-        """
-            })
-
+            print(f"\n[TOOL] SEARCH → '{keyword}' di {path}")
+            print(f"AI THINKING:\n{ai}\n")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Hasil pencarian '{keyword}':\n\n{result}"})
             continue
 
-        # =========================
-        # WRITE FILE TOOL
-        # =========================
+        # ── EXECUTE ───────────────────────────────────────────
+        execute_match = re.search(r'\[EXECUTE path="(.*?)"\]', ai)
+        if execute_match:
+            tool_used = True
+            filepath = execute_match.group(1)
+            result = execute_python(filepath)
+            print(f"\n[TOOL] EXECUTE → {filepath}")
+            print(f"AI THINKING:\n{ai}\n")
+            print(f"Hasil:\n{result}\n")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Hasil eksekusi {filepath}:\n\n{result}"})
+            continue
 
-        write_match = re.search(
+        # ── WRITE FILE ────────────────────────────────────────
+        # Proses SEMUA blok WRITE_FILE dalam satu response
+        write_matches = re.findall(
             r'\[WRITE_FILE path="(.*?)"\](.*?)\[/WRITE_FILE\]',
             ai,
             re.DOTALL
         )
 
-        if write_match:
+        # Handle format inline: [WRITE_FILE path="..." content="..."]
+        if not write_matches:
+            inline_matches = re.findall(
+                r'\[WRITE_FILE path="(.*?)" content="(.*?)"\]',
+                ai,
+                re.DOTALL
+            )
+            # Unescape \n dan \" dari inline format
+            write_matches = [
+                (path, content.replace("\\n", "\n").replace('\\"', '"'))
+                for path, content in inline_matches
+            ]
 
+        if write_matches:
             tool_used = True
-
-            filepath = write_match.group(1)
-            content = write_match.group(2).strip()
-
-            result = write_file(filepath, content)
-
-            print(f"\nSYSTEM: {result}\n")
-
-            messages.append({
-                "role": "assistant",
-                "content": ai
-            })
-
-            messages.append({
-                "role": "user",
-                "content": result
-            })
-
+            print(f"\nAI THINKING:\n{ai}\n")
+            feedback_parts = []
+            for filepath, content in write_matches:
+                content = content.strip()
+                result = write_file(filepath, content)
+                print(f"[TOOL] WRITE_FILE → {filepath}: {result}")
+                feedback_parts.append(f"{filepath}: {result}")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": "\n".join(feedback_parts)})
             continue
 
-        # Kalau tidak ada tool dipakai
+        # ── TASK COMPLETE ─────────────────────────────────────
+        if "[TASK_COMPLETE]" in ai:
+            print(f"\nAI THINKING:\n{ai}\n")
+            break
+
+        # Tidak ada tool → ini jawaban final
         if not tool_used:
             break
 
@@ -263,18 +204,12 @@ while True:
     # SIMPAN FINAL RESPONSE
     # =========================
 
-    messages.append({
-        "role": "assistant",
-        "content": ai
-    })
+    messages.append({"role": "assistant", "content": ai})
 
-    # =========================
-    # FINAL OUTPUT
-    # =========================
-
-    print("\nAI FINAL:")
+    print("\n" + "="*40)
+    print("AI FINAL:")
     print(ai)
-    print()
+    print("="*40 + "\n")
 
     # =========================
     # SAVE MEMORY

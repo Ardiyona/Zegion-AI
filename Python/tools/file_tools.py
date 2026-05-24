@@ -1,5 +1,5 @@
 import os
-
+import subprocess
 
 def list_files(path="."):
 
@@ -60,3 +60,41 @@ def write_file(path, content):
 
     except Exception as e:
         return f"Error: {str(e)}"
+    
+def execute_python(path):
+
+    try:
+
+        result = subprocess.run(
+            ["py", path],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode == 0:
+
+            return f"""
+STATUS: SUCCESS
+
+OUTPUT:
+{result.stdout}
+"""
+
+        else:
+
+            return f"""
+STATUS: ERROR
+
+ERROR:
+{result.stderr}
+"""
+
+    except Exception as e:
+
+        return f"""
+STATUS: ERROR
+
+ERROR:
+{str(e)}
+"""
