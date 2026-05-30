@@ -191,3 +191,43 @@ def summarize_project(path="."):
             results.append(f"### {filepath}\n{summary}")
 
     return "\n\n".join(results)
+
+def build_project_index(path="."):
+    """
+    Build ringkasan project untuk di-inject ke system prompt.
+    Menggunakan cache yang sudah ada (tanpa panggil AI baru).
+    Kalau belum ada cache, hanya tampilkan daftar file.
+    """
+    cache = _load_summary_cache()
+    skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
+    valid_ext = (".py", ".js", ".ts", ".md", ".txt", ".json")
+    skip_files = {"memory.json", "file_summaries.json", "project_index.json"}
+
+    lines = ["=== PROJECT INDEX ==="]
+    file_count = 0
+
+    for root, dirs, filenames in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+
+        for filename in filenames:
+            if filename in skip_files:
+                continue
+            if not filename.endswith(valid_ext):
+                continue
+
+            filepath = os.path.join(root, filename)
+            file_count += 1
+
+            # Ambil summary dari cache jika ada
+            if filepath in cache:
+                summary = cache[filepath]["summary"]
+                # Ambil baris pertama saja supaya ringkas
+                short = summary.split("\n")[0].strip()[:150]
+                lines.append(f"- {filepath}: {short}")
+            else:
+                lines.append(f"- {filepath}: (belum di-summarize)")
+
+    lines.append(f"\nTotal: {file_count} file")
+    lines.append("=== END INDEX ===")
+
+    return "\n".join(lines)

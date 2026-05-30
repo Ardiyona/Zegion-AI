@@ -10,7 +10,8 @@ from tools.file_tools import (
     search_in_files,
     execute_python,
     summarize_file,
-    summarize_project
+    summarize_project,
+    build_project_index
 )
 
 MEMORY_FILE = "memory.json"
@@ -60,6 +61,15 @@ ATURAN:
 - JANGAN gunakan format lain selain yang tertulis di atas.
 """
 }
+
+# =========================
+# AUTO-INJECT PROJECT INDEX
+# =========================
+
+print("Membangun project index...")
+project_index = build_project_index(".")
+system_prompt["content"] += f"\n{project_index}\n"
+print("Project index siap!\n")
 
 # =========================
 # LOAD MEMORY
