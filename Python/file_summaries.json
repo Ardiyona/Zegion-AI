@@ -1,0 +1,10 @@
+{
+  ".\\main.py": {
+    "hash": "50e7f95757b276260e66ad0959496c82",
+    "summary": "File ini berfungsi sebagai AI lokal yang menggunakan model Qwen3 untuk berinteraksi dengan pengguna melalui operasi berkas. Fungsi utama adalah loop pengguna yang menerima input, menyimpan pesan ke memory, dan menjalankan proses agent berlangkah dengan tools seperti membaca/tulis berkas. Dependensi utamanya adalah ollama (untuk chat), file_tools (berisi fungsi operasi berkas), dan library bawaan (json, os, re). System prompt mengatur format respons dan aturan penggunaan tools."
+  },
+  ".\\tools\\file_tools.py": {
+    "hash": "24eb47cd2e178b3dee3f493aa35c2f3a",
+    "summary": "File tools/file_tools.py adalah modul utilitas yang menyediakan fungsi untuk mengelola file seperti daftar file, pencarian kata kunci, membaca/tulis file, menjalankan skrip Python, dan membuat ringkasan file menggunakan AI dengan caching. Fungsi utama yang ada adalah `summarize_file` yang menghasilkan ringkasan singkat berbasis API Ollama dan menyimpan hasil ke cache untuk menghindari pemrosesan ulang jika konten file tidak berubah. Dependensinya meliputi `os`, `subprocess`, `json`, `hashlib`, dan library `ollama`."
+  }
+}

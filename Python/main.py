@@ -8,7 +8,9 @@ from tools.file_tools import (
     write_file,
     list_files,
     search_in_files,
-    execute_python
+    execute_python,
+    summarize_file,
+    summarize_project
 )
 
 MEMORY_FILE = "memory.json"
@@ -40,6 +42,15 @@ isi konten file di sini
 
 5. EXECUTE PYTHON:
 [EXECUTE path="nama_file.py"]
+
+6. SUMMARIZE FILE:
+[SUMMARIZE_FILE path="nama_file.py"]
+
+7. SUMMARIZE PROJECT:
+[SUMMARIZE_PROJECT path="."]
+
+Gunakan SUMMARIZE_FILE sebelum READ_FILE untuk hemat konteks.
+Gunakan READ_FILE hanya jika butuh detail penuh.
 
 ATURAN:
 - Lakukan SATU langkah per respons. Jangan gabungkan beberapa tool.
@@ -155,6 +166,30 @@ while True:
             print(f"Hasil:\n{result}\n")
             messages.append({"role": "assistant", "content": ai})
             messages.append({"role": "user", "content": f"Hasil eksekusi {filepath}:\n\n{result}"})
+            continue
+
+        # ── SUMMARIZE FILE ────────────────────────────────────
+        summarize_match = re.search(r'\[SUMMARIZE_FILE path="(.*?)"\]', ai)
+        if summarize_match:
+            tool_used = True
+            filepath = summarize_match.group(1)
+            result = summarize_file(filepath)
+            print(f"\n[TOOL] SUMMARIZE_FILE → {filepath}")
+            print(f"AI THINKING:\n{ai}\n")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Summary {filepath}:\n\n{result}"})
+            continue
+
+        # ── SUMMARIZE PROJECT ─────────────────────────────────
+        summarize_proj_match = re.search(r'\[SUMMARIZE_PROJECT path="(.*?)"\]', ai)
+        if summarize_proj_match:
+            tool_used = True
+            path = summarize_proj_match.group(1)
+            print(f"\n[TOOL] SUMMARIZE_PROJECT → {path}")
+            print(f"AI THINKING:\n{ai}\n")
+            result = summarize_project(path)
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Summary project:\n\n{result}"})
             continue
 
         # ── WRITE FILE ────────────────────────────────────────
