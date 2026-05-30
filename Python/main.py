@@ -1,81 +1,24 @@
 import json
 import os
-import re
 
-from ollama import chat
 from tools import (
-    read_file,
-    write_file,
-    list_files,
-    search_in_files,
-    execute_python,
-    summarize_file,
-    summarize_project,
     build_project_index,
     build_embeddings,
-    semantic_search,
-    compress_memory
+    compress_memory,
+    create_plan,
+    format_plan,
+    execute_plan,
+    generate_response,
 )
 
 MEMORY_FILE = "memory.json"
 
 # =========================
-# SYSTEM PROMPT
-# =========================
-
-system_prompt = {
-    "role": "system",
-    "content": """
-Kamu adalah AI assistant lokal.
-
-Kamu memiliki tools berikut. WAJIB gunakan format PERSIS seperti di bawah:
-
-1. READ FILE:
-[READ_FILE path="nama_file.py"]
-
-2. WRITE FILE:
-[WRITE_FILE path="nama_file.py"]
-isi konten file di sini
-[/WRITE_FILE]
-
-3. LIST FILES:
-[LIST_FILES path="."]
-
-4. SEARCH:
-[SEARCH keyword="kata" path="."]
-
-5. EXECUTE PYTHON:
-[EXECUTE path="nama_file.py"]
-
-6. SUMMARIZE FILE:
-[SUMMARIZE_FILE path="nama_file.py"]
-
-7. SUMMARIZE PROJECT:
-[SUMMARIZE_PROJECT path="."]
-
-8. SEMANTIC SEARCH (cari kode berdasarkan makna):
-[SEMANTIC_SEARCH query="deskripsi yang dicari"]
-
-Gunakan SEMANTIC_SEARCH untuk mencari kode/file berdasarkan makna, bukan keyword.
-Gunakan SUMMARIZE_FILE sebelum READ_FILE untuk hemat konteks.
-Gunakan READ_FILE hanya jika butuh detail penuh.
-
-ATURAN:
-- Lakukan SATU langkah per respons. Jangan gabungkan beberapa tool.
-- Setelah WRITE_FILE → wajib EXECUTE di respons berikutnya.
-- Jika STATUS: ERROR → perbaiki file lalu EXECUTE lagi.
-- Gunakan [TASK_COMPLETE] hanya jika STATUS: SUCCESS.
-- JANGAN gunakan format lain selain yang tertulis di atas.
-"""
-}
-
-# =========================
-# AUTO-INJECT PROJECT INDEX
+# STARTUP
 # =========================
 
 print("Membangun project index...")
 project_index = build_project_index(".")
-system_prompt["content"] += f"\n{project_index}\n"
 print("Project index siap!")
 
 print("Membangun embeddings...")
@@ -87,16 +30,13 @@ print(f"{embed_result}\n")
 # =========================
 
 if os.path.exists(MEMORY_FILE):
-
     try:
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             messages = json.load(f)
-
     except:
-        messages = [system_prompt]
-
+        messages = []
 else:
-    messages = [system_prompt]
+    messages = []
 
 print("AI Local Siap 😼")
 print("Ketik 'exit' untuk keluar.\n")
@@ -112,178 +52,95 @@ while True:
     if user.lower() == "exit":
         break
 
-    # Tambahkan user message
+    # Simpan user message ke memory
     messages.append({
         "role": "user",
         "content": user
     })
 
     # =========================
-    # MULTI STEP AGENT LOOP
+    # PHASE 1: PLANNER
     # =========================
 
-    MAX_ITERATIONS = 10  # naikin sedikit biar cukup
+    print("\n🧠 Planner sedang menganalisis...")
 
-    ai = ""
-    last_thinking = ""  # ← tracking AI THINKING terakhir
+    plan, raw_plan = create_plan(user, project_index)
 
-    for step in range(MAX_ITERATIONS):
+    if plan:
+        print(format_plan(plan))
+    else:
+        print(f"\n[WARN] Planner gagal membuat rencana.")
+        print(f"[DEBUG] Raw output:\n{raw_plan}\n")
 
-        response = chat(
-            model="qwen3:4b",
-            messages=messages
-        )
+        # Fallback: langsung respond
+        messages.append({
+            "role": "assistant",
+            "content": raw_plan
+        })
 
-        ai = response["message"]["content"]
-        print(f"\n[DEBUG] Raw AI response:\n{ai}\n")
+        print("\n" + "=" * 40)
+        print("AI FINAL:")
+        print(raw_plan)
+        print("=" * 40 + "\n")
 
-        tool_used = False
-
-        # ── READ FILE ──────────────────────────────────────────
-        read_match = re.search(r'\[READ_FILE path="(.*?)"\]', ai)
-        if read_match:
-            tool_used = True
-            filepath = read_match.group(1)
-            result = read_file(filepath)
-            print(f"\n[TOOL] READ_FILE → {filepath}")
-            print(f"AI THINKING:\n{ai}\n")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Isi file {filepath}:\n\n{result}"})
-            continue
-
-        # ── LIST FILES ─────────────────────────────────────────
-        list_match = re.search(r'\[LIST_FILES path="(.*?)"\]', ai)
-        if list_match:
-            tool_used = True
-            path = list_match.group(1)
-            result = list_files(path)
-            print(f"\n[TOOL] LIST_FILES → {path}")
-            print(f"AI THINKING:\n{ai}\n")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Struktur file:\n\n{result[:5000]}"})
-            continue
-
-        # ── SEARCH ────────────────────────────────────────────
-        search_match = re.search(r'\[SEARCH keyword="(.*?)" path="(.*?)"\]', ai)
-        if search_match:
-            tool_used = True
-            keyword = search_match.group(1)
-            path = search_match.group(2)
-            result = search_in_files(keyword, path)
-            print(f"\n[TOOL] SEARCH → '{keyword}' di {path}")
-            print(f"AI THINKING:\n{ai}\n")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Hasil pencarian '{keyword}':\n\n{result}"})
-            continue
-
-        # ── SEMANTIC SEARCH ───────────────────────────────────
-        sem_match = re.search(r'\[SEMANTIC_SEARCH query="(.*?)"\]', ai)
-        if sem_match:
-            tool_used = True
-            query = sem_match.group(1)
-            result = semantic_search(query)
-            print(f"\n[TOOL] SEMANTIC_SEARCH → '{query}'")
-            print(f"AI THINKING:\n{ai}\n")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Hasil semantic search '{query}':\n\n{result}"})
-            continue
-
-        # ── EXECUTE ───────────────────────────────────────────
-        execute_match = re.search(r'\[EXECUTE path="(.*?)"\]', ai)
-        if execute_match:
-            tool_used = True
-            filepath = execute_match.group(1)
-            result = execute_python(filepath)
-            print(f"\n[TOOL] EXECUTE → {filepath}")
-            print(f"AI THINKING:\n{ai}\n")
-            print(f"Hasil:\n{result}\n")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Hasil eksekusi {filepath}:\n\n{result}"})
-            continue
-
-        # ── SUMMARIZE FILE ────────────────────────────────────
-        summarize_match = re.search(r'\[SUMMARIZE_FILE path="(.*?)"\]', ai)
-        if summarize_match:
-            tool_used = True
-            filepath = summarize_match.group(1)
-            result = summarize_file(filepath)
-            print(f"\n[TOOL] SUMMARIZE_FILE → {filepath}")
-            print(f"AI THINKING:\n{ai}\n")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Summary {filepath}:\n\n{result}"})
-            continue
-
-        # ── SUMMARIZE PROJECT ─────────────────────────────────
-        summarize_proj_match = re.search(r'\[SUMMARIZE_PROJECT path="(.*?)"\]', ai)
-        if summarize_proj_match:
-            tool_used = True
-            path = summarize_proj_match.group(1)
-            print(f"\n[TOOL] SUMMARIZE_PROJECT → {path}")
-            print(f"AI THINKING:\n{ai}\n")
-            result = summarize_project(path)
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": f"Summary project:\n\n{result}"})
-            continue
-
-        # ── WRITE FILE ────────────────────────────────────────
-        # Proses SEMUA blok WRITE_FILE dalam satu response
-        write_matches = re.findall(
-            r'\[WRITE_FILE path="(.*?)"\](.*?)\[/WRITE_FILE\]',
-            ai,
-            re.DOTALL
-        )
-
-        # Handle format inline: [WRITE_FILE path="..." content="..."]
-        if not write_matches:
-            inline_matches = re.findall(
-                r'\[WRITE_FILE path="(.*?)" content="(.*?)"\]',
-                ai,
-                re.DOTALL
-            )
-            # Unescape \n dan \" dari inline format
-            write_matches = [
-                (path, content.replace("\\n", "\n").replace('\\"', '"'))
-                for path, content in inline_matches
-            ]
-
-        if write_matches:
-            tool_used = True
-            print(f"\nAI THINKING:\n{ai}\n")
-            feedback_parts = []
-            for filepath, content in write_matches:
-                content = content.strip()
-                result = write_file(filepath, content)
-                print(f"[TOOL] WRITE_FILE → {filepath}: {result}")
-                feedback_parts.append(f"{filepath}: {result}")
-            messages.append({"role": "assistant", "content": ai})
-            messages.append({"role": "user", "content": "\n".join(feedback_parts)})
-            continue
-
-        # ── TASK COMPLETE ─────────────────────────────────────
-        if "[TASK_COMPLETE]" in ai:
-            print(f"\nAI THINKING:\n{ai}\n")
-            break
-
-        # Tidak ada tool → ini jawaban final
-        if not tool_used:
-            break
+        # Save memory
+        messages, compressed = compress_memory(messages)
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(messages, f, ensure_ascii=False, indent=2)
+        continue
 
     # =========================
-    # SIMPAN FINAL RESPONSE
+    # PHASE 2: EXECUTOR
     # =========================
 
-    messages.append({"role": "assistant", "content": ai})
+    print("\n⚡ Executor sedang mengerjakan...\n")
 
-    print("\n" + "="*40)
+    results, final_response = execute_plan(plan)
+
+    # =========================
+    # PHASE 3: RESPONDER
+    # =========================
+
+    # Jika ada tool yang dipakai (bukan hanya RESPOND),
+    # gunakan AI untuk generate jawaban dari hasil aktual
+    has_tools = any(r["action"] != "RESPOND" for r in results)
+
+    if has_tools and not final_response:
+        final_response = generate_response(user, results)
+    elif has_tools and final_response:
+        # Ada final_response dari executor tapi mungkin kurang lengkap
+        final_response = generate_response(user, results)
+
+    # Simpan ke memory
+    plan_summary = ", ".join(
+        f"{t['action']}({t.get('params', {}).get('path', t.get('params', {}).get('query', ''))})"
+        for t in plan if t["action"] != "RESPOND"
+    )
+
+    if plan_summary:
+        messages.append({
+            "role": "assistant",
+            "content": f"[Plan: {plan_summary}]\n\n{final_response}"
+        })
+    else:
+        messages.append({
+            "role": "assistant",
+            "content": final_response
+        })
+
+    # =========================
+    # OUTPUT
+    # =========================
+
+    print("\n" + "=" * 40)
     print("AI FINAL:")
-    print(ai)
-    print("="*40 + "\n")
+    print(final_response)
+    print("=" * 40 + "\n")
 
     # =========================
     # SAVE MEMORY
     # =========================
 
-    # Kompres memory jika terlalu banyak pesan
     messages, compressed = compress_memory(messages)
 
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:

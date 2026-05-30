@@ -6,5 +6,9 @@
   ".\\tools\\file_tools.py": {
     "hash": "24eb47cd2e178b3dee3f493aa35c2f3a",
     "summary": "File tools/file_tools.py adalah modul utilitas yang menyediakan fungsi untuk mengelola file seperti daftar file, pencarian kata kunci, membaca/tulis file, menjalankan skrip Python, dan membuat ringkasan file menggunakan AI dengan caching. Fungsi utama yang ada adalah `summarize_file` yang menghasilkan ringkasan singkat berbasis API Ollama dan menyimpan hasil ke cache untuk menghindari pemrosesan ulang jika konten file tidak berubah. Dependensinya meliputi `os`, `subprocess`, `json`, `hashlib`, dan library `ollama`."
+  },
+  "main.py": {
+    "hash": "b8615a8fad57d8125574054353dee0f8",
+    "summary": "File main.py implements an AI chatbot that processes user queries by building a project index and embeddings, then executing a plan through tool-based actions. The primary function is the interactive loop that handles user input, generates execution plans, runs tasks, and generates responses while saving conversation history to memory.json. Dependencies include the tools module (providing functions like build_project_index, build_embeddings, create_plan, execute_plan, generate_response) and standard libraries json and os. The system exits when the user types \"exit\"."
   }
 }

@@ -1,0 +1,18 @@
+[
+  {
+    "role": "user",
+    "content": "baca file main.py dan jelaskan apa fungsinya secara singkat"
+  },
+  {
+    "role": "assistant",
+    "content": "[Plan: SUMMARIZE_FILE(main.py)]\n\nFile main.py berfungsi sebagai sistem chatbot AI yang memproses permintaan pengguna dengan membangun indeks proyek dan embeddings, menghasilkan rencana eksekusi berbasis tool, menjalankan tugas, serta menghasilkan respons sambil menyimpan riwayat percakapan ke file `memory.json`. Sistem ini akan berhenti jika pengguna mengetik \"exit\"."
+  },
+  {
+    "role": "user",
+    "content": "lihat semua file di project ini dan cari file yang mengandung kata \"compress\""
+  },
+  {
+    "role": "assistant",
+    "content": "[Plan: LIST_FILES(.), SEARCH(.)]\n\nBerikut adalah daftar file di proyek ini yang mengandung kata **\"compress\"** berdasarkan hasil pencarian:\n\n- `.embeddings_cache.json`\n- `.main.py`\n- `.tools\\memory.py`\n- `.tools\\__init__.py`\n\nCatatan: Hasil ini didapatkan dari pencarian yang dilakukan pada path proyek (`.`). File-file di atas adalah file yang terdeteksi mengandung kata kunci \"compress\" berdasarkan eksekusi tool yang dilakukan."
+  }
+]
