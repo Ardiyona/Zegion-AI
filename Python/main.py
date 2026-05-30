@@ -11,7 +11,9 @@ from tools.file_tools import (
     execute_python,
     summarize_file,
     summarize_project,
-    build_project_index
+    build_project_index,
+    build_embeddings,
+    semantic_search
 )
 
 MEMORY_FILE = "memory.json"
@@ -50,6 +52,10 @@ isi konten file di sini
 7. SUMMARIZE PROJECT:
 [SUMMARIZE_PROJECT path="."]
 
+8. SEMANTIC SEARCH (cari kode berdasarkan makna):
+[SEMANTIC_SEARCH query="deskripsi yang dicari"]
+
+Gunakan SEMANTIC_SEARCH untuk mencari kode/file berdasarkan makna, bukan keyword.
 Gunakan SUMMARIZE_FILE sebelum READ_FILE untuk hemat konteks.
 Gunakan READ_FILE hanya jika butuh detail penuh.
 
@@ -69,7 +75,11 @@ ATURAN:
 print("Membangun project index...")
 project_index = build_project_index(".")
 system_prompt["content"] += f"\n{project_index}\n"
-print("Project index siap!\n")
+print("Project index siap!")
+
+print("Membangun embeddings...")
+embed_result = build_embeddings(".")
+print(f"{embed_result}\n")
 
 # =========================
 # LOAD MEMORY
@@ -163,6 +173,18 @@ while True:
             print(f"AI THINKING:\n{ai}\n")
             messages.append({"role": "assistant", "content": ai})
             messages.append({"role": "user", "content": f"Hasil pencarian '{keyword}':\n\n{result}"})
+            continue
+
+        # ── SEMANTIC SEARCH ───────────────────────────────────
+        sem_match = re.search(r'\[SEMANTIC_SEARCH query="(.*?)"\]', ai)
+        if sem_match:
+            tool_used = True
+            query = sem_match.group(1)
+            result = semantic_search(query)
+            print(f"\n[TOOL] SEMANTIC_SEARCH → '{query}'")
+            print(f"AI THINKING:\n{ai}\n")
+            messages.append({"role": "assistant", "content": ai})
+            messages.append({"role": "user", "content": f"Hasil semantic search '{query}':\n\n{result}"})
             continue
 
         # ── EXECUTE ───────────────────────────────────────────
