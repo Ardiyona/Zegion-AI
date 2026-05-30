@@ -1,3 +1,5 @@
+import re
+from ollama import chat
 from tools.file_ops import (
     read_file,
     write_file,
@@ -12,96 +14,240 @@ from tools.summarizer import (
 from tools.semantic import (
     semantic_search,
 )
-from ollama import chat
 
+
+# =========================
+# CONFIG
+# =========================
+
+EXECUTOR_MODEL = "qwen3:4b"
 RESPONDER_MODEL = "qwen3:4b"
+MAX_EXECUTOR_STEPS = 10
 
+EXECUTOR_PROMPT = """Kamu adalah Executor AI. Tugasmu MENGERJAKAN rencana yang diberikan.
+
+Kamu punya tools berikut. WAJIB gunakan format PERSIS:
+
+1. [READ_FILE path="file.py"]
+2. [WRITE_FILE path="file.py"]
+isi file
+[/WRITE_FILE]
+3. [LIST_FILES path="."]
+4. [SEARCH keyword="kata" path="."]
+5. [EXECUTE path="file.py"]
+6. [SUMMARIZE_FILE path="file.py"]
+7. [SEMANTIC_SEARCH query="deskripsi"]
+
+ATURAN:
+- Lakukan SATU tool per respons.
+- Jika hasil EXECUTE menunjukkan error, PERBAIKI file lalu EXECUTE lagi.
+- Jika semua langkah selesai, tulis [DONE] diikuti ringkasan hasil.
+- Jika tidak perlu tool, langsung tulis [DONE] diikuti jawaban.
+"""
+
+
+# =========================
+# TOOL HANDLERS
+# =========================
+
+def _handle_tools(ai_response):
+    """
+    Parse response AI dan jalankan tool jika ada.
+    Return: (tool_used: bool, tool_name: str, result: str)
+    """
+
+    # READ FILE
+    m = re.search(r'\[READ_FILE path="(.*?)"\]', ai_response)
+    if m:
+        path = m.group(1)
+        result = read_file(path)
+        return True, "READ_FILE", path, f"Isi file {path}:\n\n{result}"
+
+    # LIST FILES
+    m = re.search(r'\[LIST_FILES path="(.*?)"\]', ai_response)
+    if m:
+        path = m.group(1)
+        result = list_files(path)
+        return True, "LIST_FILES", path, f"Struktur file:\n\n{result[:5000]}"
+
+    # SEARCH
+    m = re.search(r'\[SEARCH keyword="(.*?)" path="(.*?)"\]', ai_response)
+    if m:
+        keyword, path = m.group(1), m.group(2)
+        result = search_in_files(keyword, path)
+        return True, "SEARCH", keyword, f"Hasil pencarian '{keyword}':\n\n{result}"
+
+    # SEMANTIC SEARCH
+    m = re.search(r'\[SEMANTIC_SEARCH query="(.*?)"\]', ai_response)
+    if m:
+        query = m.group(1)
+        result = semantic_search(query)
+        return True, "SEMANTIC_SEARCH", query, f"Hasil semantic search:\n\n{result}"
+
+    # EXECUTE
+    m = re.search(r'\[EXECUTE path="(.*?)"\]', ai_response)
+    if m:
+        path = m.group(1)
+        result = execute_python(path)
+        return True, "EXECUTE", path, f"Hasil eksekusi {path}:\n\n{result}"
+
+    # SUMMARIZE FILE
+    m = re.search(r'\[SUMMARIZE_FILE path="(.*?)"\]', ai_response)
+    if m:
+        path = m.group(1)
+        result = summarize_file(path)
+        return True, "SUMMARIZE_FILE", path, f"Summary {path}:\n\n{result}"
+
+    # WRITE FILE (block format)
+    write_matches = re.findall(
+        r'\[WRITE_FILE path="(.*?)"\](.*?)\[/WRITE_FILE\]',
+        ai_response, re.DOTALL
+    )
+    if write_matches:
+        results = []
+        for path, content in write_matches:
+            content = content.strip()
+            r = write_file(path, content)
+            results.append(f"{path}: {r}")
+        return True, "WRITE_FILE", write_matches[0][0], "\n".join(results)
+
+    # WRITE FILE (inline format)
+    m = re.search(r'\[WRITE_FILE path="(.*?)" content="(.*?)"\]', ai_response, re.DOTALL)
+    if m:
+        path = m.group(1)
+        content = m.group(2).replace("\\n", "\n").replace('\\"', '"')
+        result = write_file(path, content)
+        return True, "WRITE_FILE", path, result
+
+    return False, None, None, None
+
+
+# =========================
+# EXECUTOR AGENT
+# =========================
 
 def execute_plan(plan, task_id=None):
     """
-    Eksekusi setiap langkah dalam plan secara berurutan.
-    Jika task_id diberikan, update progress ke task queue.
-
-    Return:
-    - results: list of (step, action, result) tuples
-    - final_response: pesan final untuk user (dari RESPOND action)
+    Executor AI Agent — mengerjakan plan dengan kemampuan berpikir.
+    Bisa adaptasi, retry error, dan ambil keputusan sendiri.
     """
     from tools.task_queue import update_task_step
+
+    # Format plan sebagai instruksi
+    plan_text = "\n".join(
+        f"{t.get('step', i+1)}. {t.get('action', '?')}: {t.get('reason', '')} "
+        f"(params: {t.get('params', {})})"
+        for i, t in enumerate(plan)
+    )
+
+    # Cek apakah ini plan sederhana (RESPOND saja)
+    if len(plan) == 1 and plan[0].get("action", "").upper() == "RESPOND":
+        msg = plan[0].get("params", {}).get("message", "")
+        return [{"step": 1, "action": "RESPOND", "result": msg}], msg
+
+    # Build executor messages
+    exec_messages = [
+        {"role": "system", "content": EXECUTOR_PROMPT},
+        {"role": "user", "content": f"Rencana yang harus dikerjakan:\n{plan_text}\n\nMulai kerjakan dari langkah pertama."}
+    ]
 
     results = []
     final_response = ""
 
-    if not plan:
-        return results, "Gagal membuat rencana."
+    for step in range(MAX_EXECUTOR_STEPS):
 
-    for i, task in enumerate(plan):
-        step = task.get("step", "?")
-        action = task.get("action", "").upper()
-        params = task.get("params", {})
+        # Call AI
+        response = chat(model=EXECUTOR_MODEL, messages=exec_messages)
+        ai = response["message"]["content"]
 
-        print(f"\n  ▶ Step {step}: [{action}]")
+        print(f"\n  🤖 Executor (step {step + 1}):")
 
-        result = _execute_step(action, params)
+        # Cek apakah sudah selesai
+        if "[DONE]" in ai:
+            # Ambil teks setelah [DONE]
+            done_idx = ai.index("[DONE]")
+            final_response = ai[done_idx + 6:].strip()
+            print(f"    ✅ DONE: {final_response[:150]}...")
 
-        # Tampilkan hasil singkat
-        preview = str(result)[:200]
-        print(f"    ✓ {preview}")
-
-        step_result = {
-            "step": step,
-            "action": action,
-            "params": params,
-            "result": result
-        }
-
-        results.append(step_result)
-
-        # Update task queue jika ada task_id
-        if task_id:
-            update_task_step(task_id, i, step_result)
-
-        # Jika RESPOND sederhana (tanpa tool lain sebelumnya)
-        if action == "RESPOND" and len(results) == 1:
-            final_response = params.get("message", result)
-
-        # Jika ada error, stop eksekusi
-        if isinstance(result, str) and result.startswith("Error:"):
-            print(f"    ✗ Error terdeteksi, menghentikan eksekusi.")
-            final_response = f"Terjadi error di step {step}: {result}"
+            # Update task queue
+            if task_id:
+                update_task_step(task_id, step, {
+                    "step": step + 1,
+                    "action": "DONE",
+                    "result": final_response
+                })
             break
+
+        # Coba handle tools
+        tool_used, tool_name, tool_target, tool_result = _handle_tools(ai)
+
+        if tool_used:
+            print(f"    🔧 [{tool_name}] → {tool_target}")
+            preview = str(tool_result)[:150]
+            print(f"    📄 {preview}...")
+
+            results.append({
+                "step": step + 1,
+                "action": tool_name,
+                "target": tool_target,
+                "result": tool_result
+            })
+
+            # Update task queue
+            if task_id:
+                update_task_step(task_id, step, results[-1])
+
+            # Kirim hasil kembali ke executor
+            exec_messages.append({"role": "assistant", "content": ai})
+            exec_messages.append({"role": "user", "content": tool_result})
+        else:
+            # Tidak ada tool dan tidak ada [DONE] — mungkin AI sedang berpikir
+            print(f"    💭 {ai[:150]}...")
+            exec_messages.append({"role": "assistant", "content": ai})
+            exec_messages.append({"role": "user", "content": "Lanjutkan. Gunakan tool yang sesuai atau tulis [DONE] jika sudah selesai."})
 
     return results, final_response
 
 
+# =========================
+# RESPONDER
+# =========================
+
 def generate_response(user_message, results):
     """
-    Phase 3: Responder.
+    Phase 4: Responder.
     Generate jawaban final berdasarkan hasil eksekusi yang SEBENARNYA.
     """
-    # Kalau hanya RESPOND tanpa tool lain, skip AI call
-    if len(results) == 1 and results[0]["action"] == "RESPOND":
+    # Kalau executor sudah kasih final_response yang bagus
+    if not results:
+        return "Semua langkah selesai."
+
+    # Kalau hanya RESPOND
+    if len(results) == 1 and results[0].get("action") == "RESPOND":
         return results[0]["result"]
 
     # Format hasil eksekusi untuk konteks
     context_parts = []
     for r in results:
-        action = r["action"]
-        params = r["params"]
-        result = str(r["result"])
+        action = r.get("action", "?")
+        result = str(r.get("result", ""))
 
-        if action == "RESPOND":
+        if action in ("RESPOND", "DONE"):
             continue
 
-        # Batasi panjang result untuk hemat token
         if len(result) > 2000:
             result = result[:2000] + "\n... (terpotong)"
 
-        param_str = ", ".join(f"{k}={v}" for k, v in params.items() if k != "content")
-        context_parts.append(f"[{action}({param_str})]:\n{result}")
+        target = r.get("target", "")
+        context_parts.append(f"[{action}({target})]:\n{result}")
+
+    if not context_parts:
+        # Tidak ada tool result, pakai final response dari executor
+        return results[-1].get("result", "Selesai.")
 
     context = "\n\n".join(context_parts)
 
-    print("\n  🤖 Generating response...")
+    print("\n  🤖 Responder generating answer...")
 
     response = chat(
         model=RESPONDER_MODEL,
@@ -118,47 +264,3 @@ def generate_response(user_message, results):
     )
 
     return response["message"]["content"]
-
-
-def _execute_step(action, params):
-    """Eksekusi satu langkah berdasarkan action dan params."""
-
-    if action == "READ_FILE":
-        path = params.get("path", "")
-        return read_file(path)
-
-    elif action == "WRITE_FILE":
-        path = params.get("path", "")
-        content = params.get("content", "")
-        return write_file(path, content)
-
-    elif action == "LIST_FILES":
-        path = params.get("path", ".")
-        return list_files(path)
-
-    elif action == "SEARCH":
-        keyword = params.get("keyword", "")
-        path = params.get("path", ".")
-        return search_in_files(keyword, path)
-
-    elif action == "EXECUTE":
-        path = params.get("path", "")
-        return execute_python(path)
-
-    elif action == "SUMMARIZE_FILE":
-        path = params.get("path", "")
-        return summarize_file(path)
-
-    elif action == "SUMMARIZE_PROJECT":
-        path = params.get("path", ".")
-        return summarize_project(path)
-
-    elif action == "SEMANTIC_SEARCH":
-        query = params.get("query", "")
-        return semantic_search(query)
-
-    elif action == "RESPOND":
-        return params.get("message", "")
-
-    else:
-        return f"Error: Action '{action}' tidak dikenal."

@@ -9,6 +9,7 @@ from tools import (
     format_plan,
     execute_plan,
     generate_response,
+    review_results,
     create_task,
     complete_task,
     fail_task,
@@ -19,6 +20,7 @@ from tools import (
 )
 
 MEMORY_FILE = "memory.json"
+MAX_RETRIES = 2  # Maksimal retry jika Reviewer reject
 
 # =========================
 # STARTUP
@@ -55,31 +57,71 @@ if pending:
 else:
     print("AI Local Siap 😼")
 
-print("Ketik 'exit' untuk keluar.\n")
+print("Ketik 'exit' untuk keluar.")
+print("Ketik 'resume' untuk lanjutkan task pending.\n")
 
 # =========================
-# HELPER: EXECUTE & RESPOND
+# 4-AGENT PIPELINE
 # =========================
 
-def run_task(user_request, plan, task_id):
-    """Jalankan plan dan generate response."""
+def run_pipeline(user_request, plan, task_id):
+    """
+    Sequential Multi-Agent Pipeline:
+    Planner → Executor (AI) → Reviewer (AI) → Responder (AI)
+    """
+    plan_summary = ", ".join(
+        f"{t['action']}({t.get('params', {}).get('path', t.get('params', {}).get('query', ''))})"
+        for t in plan if t.get("action", "").upper() != "RESPOND"
+    )
 
-    # Phase 2: Executor
-    print("\n⚡ Executor sedang mengerjakan...\n")
-    results, final_response = execute_plan(plan, task_id=task_id)
+    for attempt in range(MAX_RETRIES + 1):
 
-    # Phase 3: Responder
-    has_tools = any(r["action"] != "RESPOND" for r in results)
+        if attempt > 0:
+            print(f"\n🔄 Retry {attempt}/{MAX_RETRIES}...")
+
+        # ── PHASE 2: EXECUTOR (AI Agent) ──────────────────
+        print("\n⚡ Executor AI sedang mengerjakan...")
+        results, exec_response = execute_plan(plan, task_id=task_id)
+
+        # ── PHASE 3: REVIEWER (AI Agent) ──────────────────
+        print("\n🔍 Reviewer sedang mengevaluasi...")
+        approved, feedback = review_results(
+            user_request, plan_summary, results, exec_response
+        )
+
+        if approved:
+            print("  ✅ Reviewer: APPROVED!")
+            break
+        else:
+            print(f"  ❌ Reviewer: NEEDS REVISION")
+            print(f"  📝 Feedback: {feedback[:200]}")
+
+            if attempt < MAX_RETRIES:
+                # Buat plan ulang dengan feedback
+                from tools.planner import create_plan as replan
+                revision_prompt = f"{user_request}\n\n[FEEDBACK REVIEWER]: {feedback}"
+                plan, _ = replan(revision_prompt, project_index)
+
+                if not plan:
+                    break
+            else:
+                print("  ⚠️ Max retries tercapai, lanjut dengan hasil terakhir.")
+
+    # ── PHASE 4: RESPONDER (AI Agent) ─────────────────
+    has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
     if has_tools:
         final_response = generate_response(user_request, results)
+    elif exec_response:
+        final_response = exec_response
+    else:
+        final_response = "Semua langkah selesai."
 
-    # Cek error
+    # Update task queue
     has_error = any(
-        isinstance(r["result"], str) and r["result"].startswith("Error:")
+        isinstance(r.get("result", ""), str) and r["result"].startswith("Error:")
         for r in results
     )
-
     if has_error:
         fail_task(task_id, final_response)
     else:
@@ -98,10 +140,7 @@ while True:
     if user.lower() == "exit":
         break
 
-    # =========================
-    # RESUME PENDING TASKS
-    # =========================
-
+    # ── RESUME ────────────────────────────────────────
     if user.lower() == "resume":
         pending = get_pending_tasks()
 
@@ -117,63 +156,40 @@ while True:
             print(f"\n🔄 Melanjutkan [{task_id}]: {user_request[:50]}...")
             print(f"   Sisa {len(remaining)} langkah\n")
 
-            final_response = run_task(user_request, remaining, task_id)
+            final_response = run_pipeline(user_request, remaining, task_id)
 
-            # Simpan ke memory
-            messages.append({
-                "role": "user",
-                "content": f"[Resume {task_id}] {user_request}"
-            })
-            messages.append({
-                "role": "assistant",
-                "content": final_response
-            })
+            messages.append({"role": "user", "content": f"[Resume {task_id}] {user_request}"})
+            messages.append({"role": "assistant", "content": final_response})
 
             print("\n" + "=" * 40)
             print("AI FINAL:")
             print(final_response)
             print("=" * 40 + "\n")
 
-        # Save memory
-        messages, compressed = compress_memory(messages)
+        messages, _ = compress_memory(messages)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(messages, f, ensure_ascii=False, indent=2)
 
         cleanup_completed()
         continue
 
-    # =========================
-    # NORMAL FLOW
-    # =========================
-
-    # Simpan user message ke memory
-    messages.append({
-        "role": "user",
-        "content": user
-    })
+    # ── NORMAL FLOW ───────────────────────────────────
+    messages.append({"role": "user", "content": user})
 
     # Phase 1: Planner
     print("\n🧠 Planner sedang menganalisis...")
-
     plan, raw_plan = create_plan(user, project_index)
 
     if plan:
         print(format_plan(plan))
     else:
         print(f"\n[WARN] Planner gagal membuat rencana.")
-        print(f"[DEBUG] Raw output:\n{raw_plan}\n")
-
-        messages.append({
-            "role": "assistant",
-            "content": raw_plan
-        })
-
+        messages.append({"role": "assistant", "content": raw_plan})
         print("\n" + "=" * 40)
         print("AI FINAL:")
         print(raw_plan)
         print("=" * 40 + "\n")
-
-        messages, compressed = compress_memory(messages)
+        messages, _ = compress_memory(messages)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(messages, f, ensure_ascii=False, indent=2)
         continue
@@ -181,27 +197,20 @@ while True:
     # Simpan ke Task Queue
     task = create_task(user, plan)
     task_id = task["id"]
-    print(f"\n📌 Task disimpan: {task_id}")
+    print(f"📌 Task disimpan: {task_id}")
 
-    # Execute
-    final_response = run_task(user, plan, task_id)
+    # Run 4-Agent Pipeline
+    final_response = run_pipeline(user, plan, task_id)
 
     # Simpan ke memory
     plan_summary = ", ".join(
         f"{t['action']}({t.get('params', {}).get('path', t.get('params', {}).get('query', ''))})"
-        for t in plan if t["action"] != "RESPOND"
+        for t in plan if t.get("action", "").upper() != "RESPOND"
     )
-
     if plan_summary:
-        messages.append({
-            "role": "assistant",
-            "content": f"[Plan: {plan_summary}]\n\n{final_response}"
-        })
+        messages.append({"role": "assistant", "content": f"[Plan: {plan_summary}]\n\n{final_response}"})
     else:
-        messages.append({
-            "role": "assistant",
-            "content": final_response
-        })
+        messages.append({"role": "assistant", "content": final_response})
 
     # Output
     print("\n" + "=" * 40)
@@ -211,12 +220,10 @@ while True:
 
     # Save memory
     messages, compressed = compress_memory(messages)
-
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, ensure_ascii=False, indent=2)
 
     if compressed:
         print(f"[MEMORY] Memory dikompres → {len(messages)} pesan tersisa")
 
-    # Cleanup old tasks
     cleanup_completed()
