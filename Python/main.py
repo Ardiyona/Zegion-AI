@@ -9,6 +9,13 @@ from tools import (
     format_plan,
     execute_plan,
     generate_response,
+    create_task,
+    complete_task,
+    fail_task,
+    get_pending_tasks,
+    get_remaining_steps,
+    format_pending_tasks,
+    cleanup_completed,
 )
 
 MEMORY_FILE = "memory.json"
@@ -38,8 +45,47 @@ if os.path.exists(MEMORY_FILE):
 else:
     messages = []
 
-print("AI Local Siap 😼")
+# =========================
+# CEK PENDING TASKS
+# =========================
+
+pending = get_pending_tasks()
+if pending:
+    print(format_pending_tasks(pending))
+else:
+    print("AI Local Siap 😼")
+
 print("Ketik 'exit' untuk keluar.\n")
+
+# =========================
+# HELPER: EXECUTE & RESPOND
+# =========================
+
+def run_task(user_request, plan, task_id):
+    """Jalankan plan dan generate response."""
+
+    # Phase 2: Executor
+    print("\n⚡ Executor sedang mengerjakan...\n")
+    results, final_response = execute_plan(plan, task_id=task_id)
+
+    # Phase 3: Responder
+    has_tools = any(r["action"] != "RESPOND" for r in results)
+
+    if has_tools:
+        final_response = generate_response(user_request, results)
+
+    # Cek error
+    has_error = any(
+        isinstance(r["result"], str) and r["result"].startswith("Error:")
+        for r in results
+    )
+
+    if has_error:
+        fail_task(task_id, final_response)
+    else:
+        complete_task(task_id, final_response)
+
+    return final_response
 
 # =========================
 # MAIN LOOP
@@ -52,16 +98,61 @@ while True:
     if user.lower() == "exit":
         break
 
+    # =========================
+    # RESUME PENDING TASKS
+    # =========================
+
+    if user.lower() == "resume":
+        pending = get_pending_tasks()
+
+        if not pending:
+            print("\n✅ Tidak ada task yang perlu dilanjutkan.\n")
+            continue
+
+        for task in pending:
+            task_id = task["id"]
+            user_request = task["user_request"]
+            remaining = get_remaining_steps(task)
+
+            print(f"\n🔄 Melanjutkan [{task_id}]: {user_request[:50]}...")
+            print(f"   Sisa {len(remaining)} langkah\n")
+
+            final_response = run_task(user_request, remaining, task_id)
+
+            # Simpan ke memory
+            messages.append({
+                "role": "user",
+                "content": f"[Resume {task_id}] {user_request}"
+            })
+            messages.append({
+                "role": "assistant",
+                "content": final_response
+            })
+
+            print("\n" + "=" * 40)
+            print("AI FINAL:")
+            print(final_response)
+            print("=" * 40 + "\n")
+
+        # Save memory
+        messages, compressed = compress_memory(messages)
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(messages, f, ensure_ascii=False, indent=2)
+
+        cleanup_completed()
+        continue
+
+    # =========================
+    # NORMAL FLOW
+    # =========================
+
     # Simpan user message ke memory
     messages.append({
         "role": "user",
         "content": user
     })
 
-    # =========================
-    # PHASE 1: PLANNER
-    # =========================
-
+    # Phase 1: Planner
     print("\n🧠 Planner sedang menganalisis...")
 
     plan, raw_plan = create_plan(user, project_index)
@@ -72,7 +163,6 @@ while True:
         print(f"\n[WARN] Planner gagal membuat rencana.")
         print(f"[DEBUG] Raw output:\n{raw_plan}\n")
 
-        # Fallback: langsung respond
         messages.append({
             "role": "assistant",
             "content": raw_plan
@@ -83,33 +173,18 @@ while True:
         print(raw_plan)
         print("=" * 40 + "\n")
 
-        # Save memory
         messages, compressed = compress_memory(messages)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(messages, f, ensure_ascii=False, indent=2)
         continue
 
-    # =========================
-    # PHASE 2: EXECUTOR
-    # =========================
+    # Simpan ke Task Queue
+    task = create_task(user, plan)
+    task_id = task["id"]
+    print(f"\n📌 Task disimpan: {task_id}")
 
-    print("\n⚡ Executor sedang mengerjakan...\n")
-
-    results, final_response = execute_plan(plan)
-
-    # =========================
-    # PHASE 3: RESPONDER
-    # =========================
-
-    # Jika ada tool yang dipakai (bukan hanya RESPOND),
-    # gunakan AI untuk generate jawaban dari hasil aktual
-    has_tools = any(r["action"] != "RESPOND" for r in results)
-
-    if has_tools and not final_response:
-        final_response = generate_response(user, results)
-    elif has_tools and final_response:
-        # Ada final_response dari executor tapi mungkin kurang lengkap
-        final_response = generate_response(user, results)
+    # Execute
+    final_response = run_task(user, plan, task_id)
 
     # Simpan ke memory
     plan_summary = ", ".join(
@@ -128,19 +203,13 @@ while True:
             "content": final_response
         })
 
-    # =========================
-    # OUTPUT
-    # =========================
-
+    # Output
     print("\n" + "=" * 40)
     print("AI FINAL:")
     print(final_response)
     print("=" * 40 + "\n")
 
-    # =========================
-    # SAVE MEMORY
-    # =========================
-
+    # Save memory
     messages, compressed = compress_memory(messages)
 
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
@@ -148,3 +217,6 @@ while True:
 
     if compressed:
         print(f"[MEMORY] Memory dikompres → {len(messages)} pesan tersisa")
+
+    # Cleanup old tasks
+    cleanup_completed()

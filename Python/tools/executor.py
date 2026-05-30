@@ -17,21 +17,24 @@ from ollama import chat
 RESPONDER_MODEL = "qwen3:4b"
 
 
-def execute_plan(plan):
+def execute_plan(plan, task_id=None):
     """
     Eksekusi setiap langkah dalam plan secara berurutan.
+    Jika task_id diberikan, update progress ke task queue.
 
     Return:
     - results: list of (step, action, result) tuples
     - final_response: pesan final untuk user (dari RESPOND action)
     """
+    from tools.task_queue import update_task_step
+
     results = []
     final_response = ""
 
     if not plan:
         return results, "Gagal membuat rencana."
 
-    for task in plan:
+    for i, task in enumerate(plan):
         step = task.get("step", "?")
         action = task.get("action", "").upper()
         params = task.get("params", {})
@@ -44,12 +47,18 @@ def execute_plan(plan):
         preview = str(result)[:200]
         print(f"    ✓ {preview}")
 
-        results.append({
+        step_result = {
             "step": step,
             "action": action,
             "params": params,
             "result": result
-        })
+        }
+
+        results.append(step_result)
+
+        # Update task queue jika ada task_id
+        if task_id:
+            update_task_step(task_id, i, step_result)
 
         # Jika RESPOND sederhana (tanpa tool lain sebelumnya)
         if action == "RESPOND" and len(results) == 1:
