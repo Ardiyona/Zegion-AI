@@ -13,7 +13,8 @@ from tools import (
     summarize_project,
     build_project_index,
     build_embeddings,
-    semantic_search
+    semantic_search,
+    compress_memory
 )
 
 MEMORY_FILE = "memory.json"
@@ -282,5 +283,11 @@ while True:
     # SAVE MEMORY
     # =========================
 
+    # Kompres memory jika terlalu banyak pesan
+    messages, compressed = compress_memory(messages)
+
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, ensure_ascii=False, indent=2)
+
+    if compressed:
+        print(f"[MEMORY] Memory dikompres → {len(messages)} pesan tersisa")

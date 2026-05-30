@@ -19,3 +19,7 @@ from tools.semantic import (
     build_embeddings,
     semantic_search,
 )
+
+from tools.memory import (
+    compress_memory,
+)
