@@ -1,2 +1,5 @@
 memory.json
-task_queue.json
+.env
+data/
+__pycache__/
+*.pyc

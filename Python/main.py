@@ -2,6 +2,16 @@ import json
 import os
 from ollama import chat
 
+from config import (
+    AGENT_NAME,
+    AGENT_VERSION,
+    DEFAULT_MODEL,
+    MEMORY_FILE,
+    MAX_CRITIC_RETRIES,
+    MAX_REFLECT_RETRIES,
+    SYSTEM_PROMPT,
+)
+
 from tools import (
     build_project_index,
     build_embeddings,
@@ -30,14 +40,11 @@ from agents import (
     cleanup_completed,
 )
 
-MEMORY_FILE = "data/memory.json"
-CHAT_MODEL = "qwen3:4b"
-MAX_CRITIC_RETRIES = 2
-MAX_REFLECT_RETRIES = 1
-
 # =========================
 # STARTUP
 # =========================
+
+print(f"\n🤖 {AGENT_NAME} v{AGENT_VERSION} memulai...\n")
 
 print("Membangun project index...")
 project_index = build_project_index(".")
@@ -68,16 +75,13 @@ pending = get_pending_tasks()
 if pending:
     print(format_pending_tasks(pending))
 else:
-    print("AI Local Siap 😼")
+    print(f"{AGENT_NAME} Siap! 😼")
 
 print("Commands: exit | resume | /chat | /quick | /deep\n")
 
 # =========================
 # CHAT MODE
 # =========================
-
-CHAT_PROMPT = """Kamu adalah AI assistant lokal yang ramah dan helpful.
-Jawab dalam bahasa Indonesia dengan jelas dan ringkas."""
 
 def run_chat(user_input, history):
     """
@@ -87,7 +91,7 @@ def run_chat(user_input, history):
     print("\n💬 Chat Mode")
 
     # Bangun pesan dengan sedikit history untuk konteks
-    chat_messages = [{"role": "system", "content": CHAT_PROMPT}]
+    chat_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     # Ambil 10 pesan terakhir untuk konteks
     recent = history[-10:] if len(history) > 10 else history
@@ -95,7 +99,7 @@ def run_chat(user_input, history):
 
     chat_messages.append({"role": "user", "content": user_input})
 
-    response = chat(model=CHAT_MODEL, messages=chat_messages)
+    response = chat(model=DEFAULT_MODEL, messages=chat_messages)
     return response["message"]["content"]
 
 # =========================
