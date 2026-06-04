@@ -1,6 +1,15 @@
 # agents/__init__.py
 # Re-export semua fungsi agent
 
+from agents.router import (
+    detect_mode,
+    parse_override,
+    mode_label,
+    MODE_CHAT,
+    MODE_QUICK,
+    MODE_DEEP,
+)
+
 from agents.planner import (
     create_plan,
     format_plan,
@@ -11,8 +20,12 @@ from agents.executor import (
     generate_response,
 )
 
-from agents.reviewer import (
-    review_results,
+from agents.critic import (
+    critique,
+)
+
+from agents.reflection import (
+    reflect,
 )
 
 from agents.memory import (

@@ -15,7 +15,7 @@ PLANNER_MODEL = "qwen3:4b"
 
 PLANNER_PROMPT = """Kamu adalah Planner AI. Tugasmu HANYA membuat rencana langkah-langkah, BUKAN mengerjakan.
 
-Berdasarkan permintaan user, buat daftar langkah (task list) dalam format JSON.
+Berdasarkan permintaan user, buat daftar langkah (task list) dalam format JSON array.
 
 Setiap langkah harus berisi:
 - "step": nomor urut
@@ -36,20 +36,15 @@ Tools yang tersedia:
 
 ATURAN:
 - Output HANYA JSON array, tanpa penjelasan lain.
-- Jika pertanyaan sederhana (sapaan, tanya info), gunakan RESPOND saja.
 - Untuk tugas coding: analisis dulu → tulis kode → execute → verifikasi.
 - Maksimal 10 langkah.
+- Akhiri dengan RESPOND untuk konfirmasi ke user.
 
-Contoh output untuk "buatkan file hello.py yang print hello world":
+Contoh output:
 [
   {"step": 1, "action": "WRITE_FILE", "params": {"path": "hello.py", "content": "print('Hello World')"}, "reason": "Membuat file sesuai permintaan"},
   {"step": 2, "action": "EXECUTE", "params": {"path": "hello.py"}, "reason": "Verifikasi file berjalan"},
   {"step": 3, "action": "RESPOND", "params": {"message": "File hello.py berhasil dibuat dan dijalankan."}, "reason": "Konfirmasi ke user"}
-]
-
-Contoh output untuk "halo":
-[
-  {"step": 1, "action": "RESPOND", "params": {"message": "Halo! Ada yang bisa saya bantu?"}, "reason": "Sapaan sederhana"}
 ]
 """
 
@@ -57,7 +52,7 @@ Contoh output untuk "halo":
 def create_plan(user_message, project_index=""):
     """
     Buat rencana langkah-langkah berdasarkan permintaan user.
-    Return: list of task dicts, atau None jika gagal parse.
+    Return: (plan, raw)
     """
     context = ""
     if project_index:
@@ -72,36 +67,37 @@ def create_plan(user_message, project_index=""):
     )
 
     raw = response["message"]["content"]
-
-    # Parse JSON dari response
     plan = _extract_json(raw)
 
     return plan, raw
 
 
 def _extract_json(text):
-    """Ekstrak JSON array dari teks AI (yang mungkin mengandung markdown dll)."""
+    """Ekstrak JSON array dari teks AI."""
     import re
 
-    # Coba parse langsung
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        if isinstance(result, list):
+            return result
     except:
         pass
 
-    # Coba cari JSON array dalam teks
     match = re.search(r'\[[\s\S]*\]', text)
     if match:
         try:
-            return json.loads(match.group())
+            result = json.loads(match.group())
+            if isinstance(result, list):
+                return result
         except:
             pass
 
-    # Coba bersihkan markdown code block
     match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
     if match:
         try:
-            return json.loads(match.group(1).strip())
+            result = json.loads(match.group(1).strip())
+            if isinstance(result, list):
+                return result
         except:
             pass
 
@@ -109,7 +105,7 @@ def _extract_json(text):
 
 
 def format_plan(plan):
-    """Format plan menjadi teks yang readable untuk ditampilkan."""
+    """Format plan menjadi teks yang readable."""
     if not plan:
         return "Tidak bisa membuat rencana."
 
@@ -120,7 +116,6 @@ def format_plan(plan):
         params = task.get("params", {})
         reason = task.get("reason", "")
 
-        # Format params singkat
         param_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in params.items())
 
         lines.append(f"  {step}. [{action}] {param_str}")

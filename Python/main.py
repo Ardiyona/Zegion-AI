@@ -1,5 +1,6 @@
 import json
 import os
+from ollama import chat
 
 from tools import (
     build_project_index,
@@ -7,11 +8,18 @@ from tools import (
 )
 
 from agents import (
+    detect_mode,
+    parse_override,
+    mode_label,
+    MODE_CHAT,
+    MODE_QUICK,
+    MODE_DEEP,
     create_plan,
     format_plan,
     execute_plan,
     generate_response,
-    review_results,
+    critique,
+    reflect,
     compress_memory,
     create_task,
     complete_task,
@@ -23,7 +31,9 @@ from agents import (
 )
 
 MEMORY_FILE = "data/memory.json"
-MAX_RETRIES = 2  # Maksimal retry jika Reviewer reject
+CHAT_MODEL = "qwen3:4b"
+MAX_CRITIC_RETRIES = 2
+MAX_REFLECT_RETRIES = 1
 
 # =========================
 # STARTUP
@@ -60,56 +70,115 @@ if pending:
 else:
     print("AI Local Siap 😼")
 
-print("Ketik 'exit' untuk keluar.")
-print("Ketik 'resume' untuk lanjutkan task pending.\n")
+print("Commands: exit | resume | /chat | /quick | /deep\n")
 
 # =========================
-# 4-AGENT PIPELINE
+# CHAT MODE
 # =========================
 
-def run_pipeline(user_request, plan, task_id):
-    """
-    Sequential Multi-Agent Pipeline:
-    Planner → Executor (AI) → Reviewer (AI) → Responder (AI)
-    """
-    plan_summary = ", ".join(
-        f"{t['action']}({t.get('params', {}).get('path', t.get('params', {}).get('query', ''))})"
-        for t in plan if t.get("action", "").upper() != "RESPOND"
-    )
+CHAT_PROMPT = """Kamu adalah AI assistant lokal yang ramah dan helpful.
+Jawab dalam bahasa Indonesia dengan jelas dan ringkas."""
 
-    for attempt in range(MAX_RETRIES + 1):
+def run_chat(user_input, history):
+    """
+    💬 Chat Mode: Langsung ke model, tanpa Planner/Executor.
+    Hanya 1x panggilan AI. Paling cepat.
+    """
+    print("\n💬 Chat Mode")
+
+    # Bangun pesan dengan sedikit history untuk konteks
+    chat_messages = [{"role": "system", "content": CHAT_PROMPT}]
+
+    # Ambil 10 pesan terakhir untuk konteks
+    recent = history[-10:] if len(history) > 10 else history
+    chat_messages.extend(recent)
+
+    chat_messages.append({"role": "user", "content": user_input})
+
+    response = chat(model=CHAT_MODEL, messages=chat_messages)
+    return response["message"]["content"]
+
+# =========================
+# QUICK MODE
+# =========================
+
+def run_quick(user_request, plan, task_id):
+    """
+    ⚡ Quick Mode: Planner → Executor → Responder.
+    Tanpa Critic/Reflection. 2-3x panggilan AI.
+    """
+    print("\n⚡ Quick Mode — Executor mengerjakan...")
+    results, exec_response = execute_plan(plan, task_id=task_id)
+
+    has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
+
+    if has_tools:
+        final_response = generate_response(user_request, results)
+    elif exec_response:
+        final_response = exec_response
+    else:
+        final_response = "Selesai."
+
+    complete_task(task_id, final_response)
+    return final_response
+
+# =========================
+# DEEP MODE
+# =========================
+
+def run_deep(user_request, plan, task_id):
+    """
+    🔬 Deep Mode: Planner → Executor → Critic → Reflection → Responder.
+    Full pipeline. 5-7x panggilan AI.
+    """
+    results = []
+    exec_response = ""
+
+    # ── EXECUTOR + CRITIC LOOP ────────────────────────
+    for attempt in range(MAX_CRITIC_RETRIES + 1):
 
         if attempt > 0:
-            print(f"\n🔄 Retry {attempt}/{MAX_RETRIES}...")
+            print(f"\n🔄 Critic retry {attempt}/{MAX_CRITIC_RETRIES}...")
 
-        # ── PHASE 2: EXECUTOR (AI Agent) ──────────────────
-        print("\n⚡ Executor AI sedang mengerjakan...")
+        print("\n🔬 Deep Mode — Executor AI mengerjakan...")
         results, exec_response = execute_plan(plan, task_id=task_id)
 
-        # ── PHASE 3: REVIEWER (AI Agent) ──────────────────
-        print("\n🔍 Reviewer sedang mengevaluasi...")
-        approved, feedback = review_results(
-            user_request, plan_summary, results, exec_response
-        )
+        print("\n🔎 Critic mengevaluasi...")
+        passed, critic_feedback = critique(user_request, results, exec_response)
 
-        if approved:
-            print("  ✅ Reviewer: APPROVED!")
+        if passed:
+            print("  ✅ Critic: PASS!")
             break
         else:
-            print(f"  ❌ Reviewer: NEEDS REVISION")
-            print(f"  📝 Feedback: {feedback[:200]}")
+            print(f"  ❌ Critic: FAIL — {critic_feedback[:150]}")
 
-            if attempt < MAX_RETRIES:
-                from agents.planner import create_plan as replan
-                revision_prompt = f"{user_request}\n\n[FEEDBACK REVIEWER]: {feedback}"
-                plan, _ = replan(revision_prompt, project_index)
-
-                if not plan:
+            if attempt < MAX_CRITIC_RETRIES:
+                fix_prompt = f"{user_request}\n\n[CRITIC FEEDBACK]: {critic_feedback}"
+                new_plan, _ = create_plan(fix_prompt, project_index)
+                if new_plan:
+                    plan = new_plan
+                else:
                     break
             else:
-                print("  ⚠️ Max retries tercapai, lanjut dengan hasil terakhir.")
+                print("  ⚠️ Max retries tercapai.")
 
-    # ── PHASE 4: RESPONDER (AI Agent) ─────────────────
+    # ── REFLECTION ────────────────────────────────────
+    print("\n💡 Reflection menganalisis...")
+    is_good, suggestions = reflect(user_request, results, exec_response)
+
+    if is_good:
+        print("  ✅ Kualitas sudah baik!")
+    else:
+        print(f"  💡 Saran: {suggestions[:150]}")
+
+        if MAX_REFLECT_RETRIES > 0:
+            improve_prompt = f"{user_request}\n\n[REFLECTION]: {suggestions}"
+            new_plan, _ = create_plan(improve_prompt, project_index)
+            if new_plan:
+                print(f"\n⚡ Executor improvement...")
+                results, exec_response = execute_plan(new_plan, task_id=task_id)
+
+    # ── RESPONDER ─────────────────────────────────────
     has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
     if has_tools:
@@ -119,7 +188,6 @@ def run_pipeline(user_request, plan, task_id):
     else:
         final_response = "Semua langkah selesai."
 
-    # Update task queue
     has_error = any(
         isinstance(r.get("result", ""), str) and r["result"].startswith("Error:")
         for r in results
@@ -145,47 +213,64 @@ while True:
     # ── RESUME ────────────────────────────────────────
     if user.lower() == "resume":
         pending = get_pending_tasks()
-
         if not pending:
-            print("\n✅ Tidak ada task yang perlu dilanjutkan.\n")
+            print("\n✅ Tidak ada task pending.\n")
             continue
 
         for task in pending:
-            task_id = task["id"]
-            user_request = task["user_request"]
+            tid = task["id"]
+            req = task["user_request"]
             remaining = get_remaining_steps(task)
-
-            print(f"\n🔄 Melanjutkan [{task_id}]: {user_request[:50]}...")
-            print(f"   Sisa {len(remaining)} langkah\n")
-
-            final_response = run_pipeline(user_request, remaining, task_id)
-
-            messages.append({"role": "user", "content": f"[Resume {task_id}] {user_request}"})
-            messages.append({"role": "assistant", "content": final_response})
-
+            print(f"\n🔄 Resume [{tid}]: {req[:50]}...")
+            resp = run_quick(req, remaining, tid)
+            messages.append({"role": "user", "content": f"[Resume] {req}"})
+            messages.append({"role": "assistant", "content": resp})
             print("\n" + "=" * 40)
             print("AI FINAL:")
-            print(final_response)
+            print(resp)
             print("=" * 40 + "\n")
 
         messages, _ = compress_memory(messages)
         with open(MEMORY_FILE, "w", encoding="utf-8") as f:
             json.dump(messages, f, ensure_ascii=False, indent=2)
-
         cleanup_completed()
         continue
 
-    # ── NORMAL FLOW ───────────────────────────────────
-    messages.append({"role": "user", "content": user})
+    # ── DETECT MODE ───────────────────────────────────
+    forced_mode, clean_input = parse_override(user)
+    auto_mode = detect_mode(clean_input)
+    mode = forced_mode if forced_mode else auto_mode
+
+    print(f"\n[{mode_label(mode)}]")
+
+    # ── 💬 CHAT MODE ─────────────────────────────────
+    if mode == MODE_CHAT:
+        final_response = run_chat(clean_input, messages)
+
+        messages.append({"role": "user", "content": clean_input})
+        messages.append({"role": "assistant", "content": final_response})
+
+        print("\n" + "=" * 40)
+        print("AI:")
+        print(final_response)
+        print("=" * 40 + "\n")
+
+        messages, compressed = compress_memory(messages)
+        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(messages, f, ensure_ascii=False, indent=2)
+        continue
+
+    # ── ⚡/🔬 AGENT MODE (QUICK/DEEP) ────────────────
+    messages.append({"role": "user", "content": clean_input})
 
     # Phase 1: Planner
-    print("\n🧠 Planner sedang menganalisis...")
-    plan, raw_plan = create_plan(user, project_index)
+    print("🧠 Planner menganalisis...")
+    plan, raw_plan = create_plan(clean_input, project_index)
 
     if plan:
         print(format_plan(plan))
     else:
-        print(f"\n[WARN] Planner gagal membuat rencana.")
+        print("[WARN] Planner gagal.")
         messages.append({"role": "assistant", "content": raw_plan})
         print("\n" + "=" * 40)
         print("AI FINAL:")
@@ -196,36 +281,38 @@ while True:
             json.dump(messages, f, ensure_ascii=False, indent=2)
         continue
 
-    # Simpan ke Task Queue
-    task = create_task(user, plan)
+    # Task Queue
+    task = create_task(clean_input, plan)
     task_id = task["id"]
-    print(f"📌 Task disimpan: {task_id}")
+    print(f"📌 Task: {task_id}")
 
-    # Run 4-Agent Pipeline
-    final_response = run_pipeline(user, plan, task_id)
+    # Run pipeline berdasarkan mode
+    if mode == MODE_DEEP:
+        final_response = run_deep(clean_input, plan, task_id)
+    else:
+        final_response = run_quick(clean_input, plan, task_id)
 
     # Simpan ke memory
     plan_summary = ", ".join(
         f"{t['action']}({t.get('params', {}).get('path', t.get('params', {}).get('query', ''))})"
         for t in plan if t.get("action", "").upper() != "RESPOND"
     )
+    tag = f"[{mode.upper()}]"
     if plan_summary:
-        messages.append({"role": "assistant", "content": f"[Plan: {plan_summary}]\n\n{final_response}"})
+        messages.append({"role": "assistant", "content": f"{tag} [Plan: {plan_summary}]\n\n{final_response}"})
     else:
         messages.append({"role": "assistant", "content": final_response})
 
-    # Output
     print("\n" + "=" * 40)
     print("AI FINAL:")
     print(final_response)
     print("=" * 40 + "\n")
 
-    # Save memory
     messages, compressed = compress_memory(messages)
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, ensure_ascii=False, indent=2)
 
     if compressed:
-        print(f"[MEMORY] Memory dikompres → {len(messages)} pesan tersisa")
+        print(f"[MEMORY] Dikompres → {len(messages)} pesan")
 
     cleanup_completed()
