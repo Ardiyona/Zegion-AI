@@ -56,6 +56,13 @@ COMPRESS_THRESHOLD = int(os.getenv("COMPRESS_THRESHOLD", "50"))
 KEEP_RECENT_MESSAGES = int(os.getenv("KEEP_RECENT_MESSAGES", "20"))
 
 # =========================
+# CLICKUP API (bisa diubah via .env)
+# =========================
+
+CLICKUP_API_KEY = os.getenv("CLICKUP_API_KEY", "")
+CLICKUP_WORKSPACE_ID = os.getenv("CLICKUP_WORKSPACE_ID", "")
+
+# =========================
 # SYSTEM PROMPT
 # =========================
 
@@ -64,3 +71,4 @@ Namamu adalah {AGENT_NAME}. Kamu dibuat oleh {AGENT_CREATOR}.
 Jika ditanya siapa kamu, jawab bahwa kamu adalah {AGENT_NAME}, dibuat oleh {AGENT_CREATOR}.
 Jawab dalam bahasa Indonesia dengan jelas dan ringkas.
 Kamu berjalan di komputer lokal user menggunakan model {DEFAULT_MODEL} melalui Ollama."""
+

@@ -28,6 +28,10 @@ QUICK_KEYWORDS = [
     r"jalankan", r"execute", r"run\s+",
     r"cari\s+file", r"search", r"list\s+file",
     r"edit\s+", r"ubah\s+", r"ganti\s+",
+    # ClickUp
+    r"clickup", r"lihat\s+task", r"buat\s+task", r"update\s+task",
+    r"list\s+task", r"task\s+saya", r"space\s+clickup",
+    r"sprint", r"backlog", r"comment\s+task",
 ]
 
 # Keyword yang menandakan chat biasa (CHAT)

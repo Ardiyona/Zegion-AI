@@ -23,7 +23,7 @@ Setiap langkah harus berisi:
 - "params": parameter untuk tool tersebut
 - "reason": alasan singkat kenapa langkah ini diperlukan
 
-Tools yang tersedia:
+=== FILE TOOLS ===
 - READ_FILE(path) → membaca isi file
 - WRITE_FILE(path, content) → menulis file
 - LIST_FILES(path) → daftar file dalam direktori
@@ -34,17 +34,33 @@ Tools yang tersedia:
 - SEMANTIC_SEARCH(query) → cari kode berdasarkan makna
 - RESPOND(message) → jawab langsung ke user (tanpa tool)
 
+=== CLICKUP TOOLS ===
+- CLICKUP_LIST_SPACES() → lihat semua space di workspace
+- CLICKUP_LIST_LISTS(space_id) → lihat list di space
+- CLICKUP_LIST_TASKS(list_id) → lihat task di list
+- CLICKUP_GET_TASK(task_id) → detail 1 task
+- CLICKUP_CREATE_TASK(list_id, name, description, priority) → buat task baru
+- CLICKUP_UPDATE_TASK(task_id, status, priority) → update task
+- CLICKUP_ADD_COMMENT(task_id, comment) → tambah comment ke task
+
 ATURAN:
 - Output HANYA JSON array, tanpa penjelasan lain.
 - Untuk tugas coding: analisis dulu → tulis kode → execute → verifikasi.
+- Untuk ClickUp: gunakan CLICKUP tools yang sesuai.
 - Maksimal 10 langkah.
 - Akhiri dengan RESPOND untuk konfirmasi ke user.
 
-Contoh output:
+Contoh output untuk coding:
 [
-  {"step": 1, "action": "WRITE_FILE", "params": {"path": "hello.py", "content": "print('Hello World')"}, "reason": "Membuat file sesuai permintaan"},
-  {"step": 2, "action": "EXECUTE", "params": {"path": "hello.py"}, "reason": "Verifikasi file berjalan"},
-  {"step": 3, "action": "RESPOND", "params": {"message": "File hello.py berhasil dibuat dan dijalankan."}, "reason": "Konfirmasi ke user"}
+  {"step": 1, "action": "WRITE_FILE", "params": {"path": "hello.py", "content": "print('Hello World')"}, "reason": "Membuat file"},
+  {"step": 2, "action": "EXECUTE", "params": {"path": "hello.py"}, "reason": "Verifikasi"},
+  {"step": 3, "action": "RESPOND", "params": {"message": "File berhasil dibuat."}, "reason": "Konfirmasi"}
+]
+
+Contoh output untuk ClickUp:
+[
+  {"step": 1, "action": "CLICKUP_LIST_SPACES", "params": {}, "reason": "Lihat space yang tersedia"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Berikut space di workspace Anda."}, "reason": "Konfirmasi"}
 ]
 """
 

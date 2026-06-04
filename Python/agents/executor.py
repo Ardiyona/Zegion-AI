@@ -14,6 +14,15 @@ from tools.summarizer import (
 from tools.semantic import (
     semantic_search,
 )
+from tools.clickup import (
+    clickup_list_spaces,
+    clickup_list_lists,
+    clickup_list_tasks,
+    clickup_get_task,
+    clickup_create_task,
+    clickup_update_task,
+    clickup_add_comment,
+)
 
 
 # =========================
@@ -28,6 +37,7 @@ EXECUTOR_PROMPT = """Kamu adalah Executor AI. Tugasmu MENGERJAKAN rencana yang d
 
 Kamu punya tools berikut. WAJIB gunakan format PERSIS:
 
+=== FILE TOOLS ===
 1. [READ_FILE path="file.py"]
 2. [WRITE_FILE path="file.py"]
 isi file
@@ -37,6 +47,15 @@ isi file
 5. [EXECUTE path="file.py"]
 6. [SUMMARIZE_FILE path="file.py"]
 7. [SEMANTIC_SEARCH query="deskripsi"]
+
+=== CLICKUP TOOLS ===
+8. [CLICKUP_LIST_SPACES]
+9. [CLICKUP_LIST_LISTS space_id="id"]
+10. [CLICKUP_LIST_TASKS list_id="id"]
+11. [CLICKUP_GET_TASK task_id="id"]
+12. [CLICKUP_CREATE_TASK list_id="id" name="nama" description="desc" priority="normal"]
+13. [CLICKUP_UPDATE_TASK task_id="id" status="done" priority="high"]
+14. [CLICKUP_ADD_COMMENT task_id="id" comment="teks"]
 
 ATURAN:
 - Lakukan SATU tool per respons.
@@ -118,6 +137,64 @@ def _handle_tools(ai_response):
         content = m.group(2).replace("\\n", "\n").replace('\\"', '"')
         result = write_file(path, content)
         return True, "WRITE_FILE", path, result
+
+    # =========================
+    # CLICKUP TOOLS
+    # =========================
+
+    # CLICKUP LIST SPACES
+    if '[CLICKUP_LIST_SPACES]' in ai_response:
+        result = clickup_list_spaces()
+        return True, "CLICKUP_LIST_SPACES", "spaces", result
+
+    # CLICKUP LIST LISTS
+    m = re.search(r'\[CLICKUP_LIST_LISTS space_id="(.*?)"\]', ai_response)
+    if m:
+        space_id = m.group(1)
+        result = clickup_list_lists(space_id)
+        return True, "CLICKUP_LIST_LISTS", space_id, result
+
+    # CLICKUP LIST TASKS
+    m = re.search(r'\[CLICKUP_LIST_TASKS list_id="(.*?)"\]', ai_response)
+    if m:
+        list_id = m.group(1)
+        result = clickup_list_tasks(list_id)
+        return True, "CLICKUP_LIST_TASKS", list_id, result
+
+    # CLICKUP GET TASK
+    m = re.search(r'\[CLICKUP_GET_TASK task_id="(.*?)"\]', ai_response)
+    if m:
+        task_id = m.group(1)
+        result = clickup_get_task(task_id)
+        return True, "CLICKUP_GET_TASK", task_id, result
+
+    # CLICKUP CREATE TASK
+    m = re.search(r'\[CLICKUP_CREATE_TASK list_id="(.*?)" name="(.*?)"(?:\s+description="(.*?)")?(?:\s+priority="(.*?)")?\]', ai_response)
+    if m:
+        list_id = m.group(1)
+        name = m.group(2)
+        desc = m.group(3) or ""
+        priority = m.group(4)
+        result = clickup_create_task(list_id, name, desc, priority=priority)
+        return True, "CLICKUP_CREATE_TASK", name, result
+
+    # CLICKUP UPDATE TASK
+    m = re.search(r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?\]', ai_response)
+    if m:
+        task_id = m.group(1)
+        status = m.group(2)
+        priority = m.group(3)
+        name = m.group(4)
+        result = clickup_update_task(task_id, status=status, priority=priority, name=name)
+        return True, "CLICKUP_UPDATE_TASK", task_id, result
+
+    # CLICKUP ADD COMMENT
+    m = re.search(r'\[CLICKUP_ADD_COMMENT task_id="(.*?)" comment="(.*?)"\]', ai_response, re.DOTALL)
+    if m:
+        task_id = m.group(1)
+        comment = m.group(2)
+        result = clickup_add_comment(task_id, comment)
+        return True, "CLICKUP_ADD_COMMENT", task_id, result
 
     return False, None, None, None
 
