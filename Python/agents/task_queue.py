@@ -7,7 +7,7 @@ from datetime import datetime
 # CONFIG
 # =========================
 
-QUEUE_FILE = "task_queue.json"
+QUEUE_FILE = "data/task_queue.json"
 
 
 # =========================
@@ -37,6 +37,7 @@ def load_queue():
 
 def save_queue(queue):
     """Simpan task queue ke file."""
+    os.makedirs(os.path.dirname(QUEUE_FILE), exist_ok=True)
     with open(QUEUE_FILE, "w", encoding="utf-8") as f:
         json.dump(queue, f, ensure_ascii=False, indent=2)
 
@@ -146,11 +147,9 @@ def cleanup_completed(keep=10):
     """Hapus task completed yang lama, simpan N terbaru."""
     queue = load_queue()
 
-    # Pisahkan: yang belum selesai + N completed terbaru
     pending = [t for t in queue if t["status"] in (STATUS_PENDING, STATUS_IN_PROGRESS)]
     completed = [t for t in queue if t["status"] in (STATUS_COMPLETED, STATUS_FAILED)]
 
-    # Keep N terbaru dari completed
     kept = completed[-keep:] if len(completed) > keep else completed
 
     save_queue(pending + kept)

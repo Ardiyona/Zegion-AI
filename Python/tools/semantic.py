@@ -10,7 +10,7 @@ from tools.summarizer import file_hash
 # CONFIG
 # =========================
 
-EMBEDDING_CACHE_FILE = "embeddings_cache.json"
+EMBEDDING_CACHE_FILE = "data/embeddings_cache.json"
 EMBEDDING_MODEL = "nomic-embed-text"
 
 
@@ -89,7 +89,7 @@ def build_embeddings(path="."):
     Menggunakan hash-based cache — skip file yang belum berubah.
     """
     cache = _load_embedding_cache()
-    skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
+    skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv", "data"}
     valid_ext = (".py", ".js", ".ts", ".md", ".txt")
     skip_files = {"memory.json", "file_summaries.json", "embeddings_cache.json"}
 

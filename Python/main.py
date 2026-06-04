@@ -4,12 +4,15 @@ import os
 from tools import (
     build_project_index,
     build_embeddings,
-    compress_memory,
+)
+
+from agents import (
     create_plan,
     format_plan,
     execute_plan,
     generate_response,
     review_results,
+    compress_memory,
     create_task,
     complete_task,
     fail_task,
@@ -19,7 +22,7 @@ from tools import (
     cleanup_completed,
 )
 
-MEMORY_FILE = "memory.json"
+MEMORY_FILE = "data/memory.json"
 MAX_RETRIES = 2  # Maksimal retry jika Reviewer reject
 
 # =========================
@@ -97,8 +100,7 @@ def run_pipeline(user_request, plan, task_id):
             print(f"  📝 Feedback: {feedback[:200]}")
 
             if attempt < MAX_RETRIES:
-                # Buat plan ulang dengan feedback
-                from tools.planner import create_plan as replan
+                from agents.planner import create_plan as replan
                 revision_prompt = f"{user_request}\n\n[FEEDBACK REVIEWER]: {feedback}"
                 plan, _ = replan(revision_prompt, project_index)
 

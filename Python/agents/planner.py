@@ -90,7 +90,6 @@ def _extract_json(text):
         pass
 
     # Coba cari JSON array dalam teks
-    # Pattern: cari [ ... ] yang mengandung JSON
     match = re.search(r'\[[\s\S]*\]', text)
     if match:
         try:

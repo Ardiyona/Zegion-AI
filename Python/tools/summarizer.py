@@ -9,7 +9,7 @@ from tools.file_ops import read_file
 # CACHE HELPERS
 # =========================
 
-SUMMARY_CACHE_FILE = "file_summaries.json"
+SUMMARY_CACHE_FILE = "data/file_summaries.json"
 
 
 def _load_summary_cache():
@@ -95,7 +95,7 @@ def summarize_project(path="."):
     for root, dirs, filenames in os.walk(path):
         # Skip folder yang tidak relevan
         dirs[:] = [d for d in dirs if d not in [
-            "__pycache__", ".git", "node_modules", ".venv", "venv"
+            "__pycache__", ".git", "node_modules", ".venv", "venv", "data"
         ]]
         for filename in filenames:
             if not filename.endswith((".py", ".js", ".ts", ".md", ".txt")):
@@ -119,7 +119,7 @@ def build_project_index(path="."):
     Kalau belum ada cache, hanya tampilkan daftar file.
     """
     cache = _load_summary_cache()
-    skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv"}
+    skip_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv", "data"}
     valid_ext = (".py", ".js", ".ts", ".md", ".txt", ".json")
     skip_files = {"memory.json", "file_summaries.json", "project_index.json"}
 

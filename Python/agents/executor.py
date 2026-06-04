@@ -53,7 +53,7 @@ ATURAN:
 def _handle_tools(ai_response):
     """
     Parse response AI dan jalankan tool jika ada.
-    Return: (tool_used: bool, tool_name: str, result: str)
+    Return: (tool_used, tool_name, tool_target, result)
     """
 
     # READ FILE
@@ -131,7 +131,7 @@ def execute_plan(plan, task_id=None):
     Executor AI Agent — mengerjakan plan dengan kemampuan berpikir.
     Bisa adaptasi, retry error, dan ambil keputusan sendiri.
     """
-    from tools.task_queue import update_task_step
+    from agents.task_queue import update_task_step
 
     # Format plan sebagai instruksi
     plan_text = "\n".join(
@@ -164,12 +164,10 @@ def execute_plan(plan, task_id=None):
 
         # Cek apakah sudah selesai
         if "[DONE]" in ai:
-            # Ambil teks setelah [DONE]
             done_idx = ai.index("[DONE]")
             final_response = ai[done_idx + 6:].strip()
             print(f"    ✅ DONE: {final_response[:150]}...")
 
-            # Update task queue
             if task_id:
                 update_task_step(task_id, step, {
                     "step": step + 1,
@@ -193,15 +191,12 @@ def execute_plan(plan, task_id=None):
                 "result": tool_result
             })
 
-            # Update task queue
             if task_id:
                 update_task_step(task_id, step, results[-1])
 
-            # Kirim hasil kembali ke executor
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": tool_result})
         else:
-            # Tidak ada tool dan tidak ada [DONE] — mungkin AI sedang berpikir
             print(f"    💭 {ai[:150]}...")
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": "Lanjutkan. Gunakan tool yang sesuai atau tulis [DONE] jika sudah selesai."})
@@ -218,11 +213,9 @@ def generate_response(user_message, results):
     Phase 4: Responder.
     Generate jawaban final berdasarkan hasil eksekusi yang SEBENARNYA.
     """
-    # Kalau executor sudah kasih final_response yang bagus
     if not results:
         return "Semua langkah selesai."
 
-    # Kalau hanya RESPOND
     if len(results) == 1 and results[0].get("action") == "RESPOND":
         return results[0]["result"]
 
@@ -242,7 +235,6 @@ def generate_response(user_message, results):
         context_parts.append(f"[{action}({target})]:\n{result}")
 
     if not context_parts:
-        # Tidak ada tool result, pakai final response dari executor
         return results[-1].get("result", "Selesai.")
 
     context = "\n\n".join(context_parts)

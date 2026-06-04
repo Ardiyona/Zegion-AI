@@ -1,1 +1,0 @@
-print('Halo dari Planner!')

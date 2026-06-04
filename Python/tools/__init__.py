@@ -1,5 +1,5 @@
 # tools/__init__.py
-# Re-export semua fungsi agar import di main.py tetap bersih
+# Re-export fungsi tools (operasi file, tanpa AI agent)
 
 from tools.file_ops import (
     list_files,
@@ -18,32 +18,4 @@ from tools.summarizer import (
 from tools.semantic import (
     build_embeddings,
     semantic_search,
-)
-
-from tools.memory import (
-    compress_memory,
-)
-
-from tools.planner import (
-    create_plan,
-    format_plan,
-)
-
-from tools.executor import (
-    execute_plan,
-    generate_response,
-)
-
-from tools.reviewer import (
-    review_results,
-)
-
-from tools.task_queue import (
-    create_task,
-    complete_task,
-    fail_task,
-    get_pending_tasks,
-    get_remaining_steps,
-    format_pending_tasks,
-    cleanup_completed,
 )
