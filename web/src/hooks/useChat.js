@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API_BASE = 'http://localhost:8000';
+const POLL_INTERVAL = 3000; // 3 detik
 
 export function useChat() {
   const [conversations, setConversations] = useState([]);
@@ -8,7 +9,15 @@ export function useChat() {
   const [messages, setMessages] = useState([]);
   const [isThinking, setIsThinking] = useState(false);
   const [wsStatus, setWsStatus] = useState('connecting');
+
   const wsRef = useRef(null);
+  const activeConvIdRef = useRef(null); // ref agar closure WS bisa baca nilai terbaru
+  const pollTimerRef = useRef(null);
+  const isThinkingRef = useRef(false);
+
+  // Sinkronkan ref dengan state
+  useEffect(() => { activeConvIdRef.current = activeConvId; }, [activeConvId]);
+  useEffect(() => { isThinkingRef.current = isThinking; }, [isThinking]);
 
   // ── Fetch conversation list ────────────────────────
   const fetchConversations = useCallback(async () => {
@@ -17,22 +26,63 @@ export function useChat() {
       const data = await res.json();
       setConversations(data.conversations || []);
     } catch (e) {
-      console.error('[API] Failed to fetch conversations:', e);
+      console.error('[API] fetchConversations failed:', e);
     }
   }, []);
 
-  // ── Fetch messages for a conversation ─────────────
+  // ── Fetch messages (return messages untuk dicek) ───
   const fetchMessages = useCallback(async (convId) => {
     try {
       const res = await fetch(`${API_BASE}/conversations/${convId}/messages`);
       const data = await res.json();
-      setMessages(data.messages || []);
+      const msgs = data.messages || [];
+      setMessages(msgs);
+      return msgs;
     } catch (e) {
-      console.error('[API] Failed to fetch messages:', e);
+      console.error('[API] fetchMessages failed:', e);
+      return [];
     }
   }, []);
 
-  // ── Connect WebSocket untuk conversation tertentu ──
+  // ── Stop polling ───────────────────────────────────
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  // ── Start polling untuk conversation dengan pesan pending ──
+  const startPolling = useCallback((convId) => {
+    stopPolling();
+
+    pollTimerRef.current = setInterval(async () => {
+      // Hanya poll jika masih di conversation yang sama
+      if (activeConvIdRef.current !== convId) {
+        stopPolling();
+        return;
+      }
+
+      const msgs = await fetchMessages(convId);
+      const lastMsg = msgs[msgs.length - 1];
+
+      // Jika sudah ada response dari assistant → stop poll
+      if (lastMsg && lastMsg.role === 'assistant') {
+        stopPolling();
+        setIsThinking(false);
+        fetchConversations(); // Refresh title di sidebar
+      }
+    }, POLL_INTERVAL);
+  }, [stopPolling, fetchMessages, fetchConversations]);
+
+  // ── Cek apakah ada pesan pending (user tanpa response) ──
+  const hasPendingMessage = useCallback((msgs) => {
+    if (!msgs || msgs.length === 0) return false;
+    const last = msgs[msgs.length - 1];
+    return last?.role === 'user';
+  }, []);
+
+  // ── Connect WebSocket ──────────────────────────────
   const connectWs = useCallback((convId) => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -43,9 +93,22 @@ export function useChat() {
     const ws = new WebSocket(`ws://localhost:8000/ws/${convId}`);
     wsRef.current = ws;
 
-    ws.onopen = () => {
-      console.log(`[WS] Connected → conv: ${convId.slice(0, 8)}`);
+    ws.onopen = async () => {
+      console.log(`[WS] Connected → ${convId.slice(0, 8)}`);
       setWsStatus('ready');
+
+      // Refresh messages saat WS connect — tangkap response yang tersimpan
+      // saat WS sebelumnya terputus
+      const msgs = await fetchMessages(convId);
+
+      if (hasPendingMessage(msgs)) {
+        // Response belum ada → mulai polling
+        setIsThinking(true);
+        startPolling(convId);
+      } else {
+        setIsThinking(false);
+        stopPolling();
+      }
     };
 
     ws.onmessage = (event) => {
@@ -58,6 +121,7 @@ export function useChat() {
         }
 
         setIsThinking(false);
+        stopPolling();
 
         if (data.type === 'response') {
           const newMsg = {
@@ -69,15 +133,17 @@ export function useChat() {
             created_at: Date.now() / 1000,
           };
           setMessages((prev) => [...prev, newMsg]);
-
-          // Refresh conversation list untuk update title & timestamp
           fetchConversations();
         }
 
         if (data.type === 'error') {
           setMessages((prev) => [
             ...prev,
-            { role: 'assistant', content: `Terjadi error: ${data.text}`, created_at: Date.now() / 1000 },
+            {
+              role: 'assistant',
+              content: `Terjadi error: ${data.text}`,
+              created_at: Date.now() / 1000,
+            },
           ]);
         }
       } catch (e) {
@@ -86,24 +152,29 @@ export function useChat() {
     };
 
     ws.onclose = () => {
-      console.log('[WS] Disconnected');
+      console.log(`[WS] Disconnected → ${convId.slice(0, 8)}`);
       setWsStatus('error');
-      setIsThinking(false);
     };
 
     ws.onerror = () => {
       setWsStatus('error');
     };
-  }, [fetchConversations]);
+  }, [fetchMessages, fetchConversations, hasPendingMessage, startPolling, stopPolling]);
 
   // ── Switch conversation ────────────────────────────
   const switchConversation = useCallback(async (convId) => {
+    if (convId === activeConvIdRef.current) return;
+
+    stopPolling();
     setActiveConvId(convId);
     setMessages([]);
     setIsThinking(false);
+
+    // Fetch messages dulu sebelum connect WS
+    // (onopen juga akan fetch lagi untuk tangkap response pending)
     await fetchMessages(convId);
     connectWs(convId);
-  }, [fetchMessages, connectWs]);
+  }, [fetchMessages, connectWs, stopPolling]);
 
   // ── New conversation ───────────────────────────────
   const newConversation = useCallback(async () => {
@@ -113,7 +184,7 @@ export function useChat() {
       setConversations((prev) => [conv, ...prev]);
       await switchConversation(conv.id);
     } catch (e) {
-      console.error('[API] Failed to create conversation:', e);
+      console.error('[API] newConversation failed:', e);
     }
   }, [switchConversation]);
 
@@ -121,57 +192,55 @@ export function useChat() {
   const deleteConversation = useCallback(async (convId) => {
     try {
       await fetch(`${API_BASE}/conversations/${convId}`, { method: 'DELETE' });
-      setConversations((prev) => prev.filter((c) => c.id !== convId));
 
-      // Jika yang dihapus adalah active, switch ke yang lain atau buat baru
-      if (convId === activeConvId) {
-        const remaining = conversations.filter((c) => c.id !== convId);
-        if (remaining.length > 0) {
-          await switchConversation(remaining[0].id);
+      const updated = conversations.filter((c) => c.id !== convId);
+      setConversations(updated);
+
+      if (convId === activeConvIdRef.current) {
+        if (updated.length > 0) {
+          await switchConversation(updated[0].id);
         } else {
           await newConversation();
         }
       }
     } catch (e) {
-      console.error('[API] Failed to delete conversation:', e);
+      console.error('[API] deleteConversation failed:', e);
     }
-  }, [activeConvId, conversations, switchConversation, newConversation]);
+  }, [conversations, switchConversation, newConversation]);
 
   // ── Send message ───────────────────────────────────
   const sendMessage = useCallback((text) => {
-    if (!text.trim() || isThinking || wsStatus !== 'ready') return;
+    if (!text.trim() || isThinkingRef.current || wsStatus !== 'ready') return;
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-    // Tambah ke UI dulu (optimistic)
+    // Optimistic UI
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: text, created_at: Date.now() / 1000 },
     ]);
 
     wsRef.current.send(JSON.stringify({ message: text }));
-  }, [isThinking, wsStatus]);
+  }, [wsStatus]);
 
-  // ── Init: load conversations, auto-select latest ──
+  // ── Init ───────────────────────────────────────────
   useEffect(() => {
-    const init = async () => {
-      await fetchConversations();
-    };
-    init();
+    fetchConversations();
   }, [fetchConversations]);
 
   // Auto-select conversation pertama saat list loaded
   useEffect(() => {
-    if (conversations.length > 0 && !activeConvId) {
+    if (conversations.length > 0 && !activeConvIdRef.current) {
       switchConversation(conversations[0].id);
     }
-  }, [conversations, activeConvId, switchConversation]);
+  }, [conversations, switchConversation]);
 
-  // Cleanup WS saat unmount
+  // Cleanup
   useEffect(() => {
     return () => {
       wsRef.current?.close();
+      stopPolling();
     };
-  }, []);
+  }, [stopPolling]);
 
   return {
     conversations,
@@ -183,6 +252,5 @@ export function useChat() {
     newConversation,
     switchConversation,
     deleteConversation,
-    fetchConversations,
   };
 }
