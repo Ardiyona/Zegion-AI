@@ -1,2 +1,4 @@
 ollama
 requests
+fastapi
+uvicorn[standard]
