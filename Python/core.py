@@ -57,6 +57,9 @@ from db import (
     generate_title_from_message,
     migrate_from_json,
     delete_conversation,
+    kb_add,
+    kb_get_context,
+    is_conversation_worth_summarizing,
 )
 
 
@@ -71,7 +74,7 @@ def initialize():
     """
     print(f"\n{AGENT_NAME} v{AGENT_VERSION} memulai...\n")
 
-    # Init SQLite DB
+    # Init SQLite DB (termasuk tabel knowledge_base)
     init_db()
     print("[DB] Database ready.")
 
@@ -95,7 +98,7 @@ def initialize():
 
 # Public alias untuk startup ringan di api.py (tanpa Ollama)
 def quick_init():
-    """Startup cepat: hanya init DB dan migrasi. Tanpa Ollama."""
+    """Startup cepat: hanya init DB (termasuk KB table) dan migrasi."""
     init_db()
     if os.path.exists(MEMORY_FILE):
         migrate_from_json(MEMORY_FILE)
@@ -108,9 +111,17 @@ def quick_init():
 def _build_ollama_history(conv_id, limit=20):
     """
     Ambil pesan terakhir dari DB dan format untuk Ollama.
-    System prompt selalu di depan.
+    Inject: system prompt + long-term knowledge + recent messages.
     """
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Ambil long-term knowledge context
+    kb_context = kb_get_context(max_entries=8)
+
+    # System prompt + optional KB
+    system_content = SYSTEM_PROMPT
+    if kb_context:
+        system_content = f"{SYSTEM_PROMPT}\n\n{kb_context}"
+
+    messages = [{"role": "system", "content": system_content}]
     history = get_messages_as_ollama_format(conv_id, limit=limit)
     messages.extend(history)
     return messages
@@ -300,3 +311,88 @@ def handle_message(user_input, conv_id, project_index=""):
 
     cleanup_completed()
     return final_response, conv_id, mode, plan
+
+
+# =========================
+# SMART DELETE
+# =========================
+
+def smart_delete_conversation(conv_id):
+    """
+    Hapus conversation dengan safety check:
+    1. Cek apakah conversation penting (rule-based, cepat)
+    2. Jika penting → AI summarize → simpan ke knowledge base
+    3. Hapus conversation dari DB
+
+    Return: {
+        "deleted": bool,
+        "summarized": bool,
+        "kb_entry": dict or None,
+        "reason": str
+    }
+    """
+    from db import get_messages as _get_messages
+
+    conv = get_conversation(conv_id)
+    if not conv:
+        return {"deleted": False, "summarized": False, "kb_entry": None,
+                "reason": "Conversation tidak ditemukan"}
+
+    worth_summarizing = is_conversation_worth_summarizing(conv_id)
+
+    kb_entry = None
+    if worth_summarizing:
+        # Ambil semua pesan untuk di-summarize
+        messages = _get_messages(conv_id)
+        conversation_text = "\n".join(
+            f"[{m['role'].upper()}]: {m['content'][:400]}"
+            for m in messages
+            if m["role"] in ("user", "assistant")
+        )
+
+        # Determine importance berdasarkan mode yang dipakai
+        has_deep = any(m.get("mode_key") == "deep" for m in messages)
+        importance = "high" if has_deep else "medium"
+
+        # AI generate summary
+        try:
+            summary_response = chat(
+                model=DEFAULT_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": f"""Buat ringkasan singkat dari percakapan ini. 
+Fokus pada:
+1. Apa yang dikerjakan/diputuskan
+2. File atau konfigurasi yang berubah
+3. Konteks penting yang perlu diingat ke depan
+
+Format: bullet points singkat, maksimal 5 poin.
+Jawab langsung dalam bahasa Indonesia.
+
+Percakapan:
+{conversation_text[:4000]}"""
+                }]
+            )
+            summary = summary_response["message"]["content"].strip()
+        except Exception as e:
+            summary = f"[Gagal generate summary: {e}]"
+            importance = "low"
+
+        # Simpan ke knowledge base
+        kb_entry = kb_add(
+            content=summary,
+            source_conv_id=conv_id,
+            source_title=conv.get("title", "Unknown"),
+            importance=importance,
+        )
+        print(f"[KB] Saved summary from '{conv.get('title')}' (importance: {importance})")
+
+    # Hapus conversation (CASCADE hapus messages juga)
+    delete_conversation(conv_id)
+
+    return {
+        "deleted": True,
+        "summarized": worth_summarizing,
+        "kb_entry": kb_entry,
+        "reason": "Summarized & deleted" if worth_summarizing else "Deleted (not worth summarizing)",
+    }

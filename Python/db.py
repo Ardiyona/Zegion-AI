@@ -55,11 +55,26 @@ def init_db():
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
 
+            -- Knowledge Base: persistent, tapi bisa diedit/dihapus (safety valve)
+            CREATE TABLE IF NOT EXISTS knowledge_base (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_conv_id  TEXT,       -- dari conversation mana (bisa NULL)
+                source_title    TEXT,       -- judul conversation aslinya
+                content         TEXT NOT NULL,  -- ringkasan knowledge
+                importance      TEXT DEFAULT 'medium',  -- high / medium / low
+                is_corrected    INTEGER DEFAULT 0,  -- 1 jika user sudah koreksi
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_messages_conv
                 ON messages(conversation_id, created_at);
 
             CREATE INDEX IF NOT EXISTS idx_conversations_updated
                 ON conversations(updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_kb_importance
+                ON knowledge_base(importance, updated_at DESC);
         """)
         conn.commit()
     finally:
@@ -253,7 +268,6 @@ def generate_title_from_message(text, max_len=50):
     if len(text) <= max_len:
         return text
 
-    # Potong di spasi terakhir sebelum max_len
     truncated = text[:max_len]
     last_space = truncated.rfind(" ")
     if last_space > 20:
@@ -263,7 +277,7 @@ def generate_title_from_message(text, max_len=50):
 
 
 # =========================
-# MIGRATION: JSON → SQLite
+# MIGRATION: JSON -> SQLite
 # =========================
 
 def migrate_from_json(json_path):
@@ -280,13 +294,11 @@ def migrate_from_json(json_path):
     except Exception:
         return False
 
-    # Filter hanya user + assistant (skip system prompt)
     chat_messages = [m for m in messages if m.get("role") in ("user", "assistant")]
 
     if not chat_messages:
         return False
 
-    # Buat 1 conversation untuk data lama
     conv = create_conversation("Imported History")
 
     for msg in chat_messages:
@@ -296,7 +308,163 @@ def migrate_from_json(json_path):
             content=msg.get("content", ""),
         )
 
-    # Rename file JSON lama agar tidak migrate lagi
     os.rename(json_path, json_path + ".migrated")
     print(f"[DB] Migrated {len(chat_messages)} messages from {json_path}")
     return True
+
+
+# =========================
+# KNOWLEDGE BASE CRUD
+# =========================
+
+def kb_add(content, source_conv_id=None, source_title=None, importance="medium"):
+    """Tambah entri baru ke knowledge base."""
+    now = int(time.time())
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            """INSERT INTO knowledge_base
+               (source_conv_id, source_title, content, importance, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (source_conv_id, source_title, content, importance, now, now)
+        )
+        entry_id = cursor.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": entry_id, "content": content, "importance": importance,
+            "source_title": source_title, "created_at": now}
+
+
+def kb_list(limit=100):
+    """List semua KB entries, prioritaskan importance tinggi + terbaru."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT id, source_conv_id, source_title, content,
+                      importance, is_corrected, created_at, updated_at
+               FROM knowledge_base
+               ORDER BY
+                   CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                   updated_at DESC
+               LIMIT ?""",
+            (limit,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def kb_get(entry_id):
+    """Ambil 1 KB entry by ID."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM knowledge_base WHERE id = ?", (entry_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def kb_update(entry_id, content=None, importance=None):
+    """Update KB entry (safety valve: user bisa koreksi)."""
+    now = int(time.time())
+    conn = get_connection()
+    try:
+        # Build dynamic SET clause
+        updates = ["updated_at = ?", "is_corrected = 1"]
+        values = [now]
+        if content is not None:
+            updates.append("content = ?")
+            values.append(content)
+        if importance is not None:
+            updates.append("importance = ?")
+            values.append(importance)
+        values.append(entry_id)
+
+        conn.execute(
+            f"UPDATE knowledge_base SET {', '.join(updates)} WHERE id = ?",
+            values
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return kb_get(entry_id)
+
+
+def kb_delete(entry_id):
+    """Hapus 1 KB entry (safety valve: kalau ternyata salah)."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM knowledge_base WHERE id = ?", (entry_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def kb_get_context(max_entries=10):
+    """
+    Ambil KB entries untuk di-inject ke context AI.
+    Prioritaskan: high importance, user-corrected, terbaru.
+    Return string yang siap dipakai di prompt.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT content, importance, is_corrected
+               FROM knowledge_base
+               ORDER BY
+                   is_corrected DESC,
+                   CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                   updated_at DESC
+               LIMIT ?""",
+            (max_entries,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return ""
+
+    lines = ["[LONG-TERM KNOWLEDGE]"]
+    for row in rows:
+        marker = "[VERIFIED] " if row["is_corrected"] else ""
+        lines.append(f"- {marker}{row['content']}")
+    lines.append("[/LONG-TERM KNOWLEDGE]")
+
+    return "\n".join(lines)
+
+
+# =========================
+# SMART DELETE HELPER
+# =========================
+
+def is_conversation_worth_summarizing(conv_id):
+    """
+    Rule-based check: apakah conversation ini penting?
+    Kriteria:
+    - Lebih dari 3 pesan (bukan cuma sapaan)
+    - Ada penggunaan mode QUICK/DEEP (ada tools dijalankan)
+    - ATAU total konten cukup panjang (>= 500 chars)
+    """
+    conn = get_connection()
+    try:
+        msgs = conn.execute(
+            "SELECT role, content, mode_key FROM messages WHERE conversation_id = ?",
+            (conv_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if len(msgs) < 4:
+        return False
+
+    has_agent_mode = any(
+        m["mode_key"] in ("quick", "deep") for m in msgs
+        if m["mode_key"]
+    )
+    total_chars = sum(len(m["content"]) for m in msgs)
+
+    return has_agent_mode or total_chars >= 500

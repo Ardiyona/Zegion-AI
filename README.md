@@ -12,10 +12,11 @@ Zegion adalah multi-agent AI assistant yang bisa membaca, menulis, dan menjalank
 
 - 🧠 **Multi-Agent Pipeline** — Planner → Executor → Critic → Reflection → Responder
 - 🔀 **3 Mode Otomatis** — Chat / Quick / Deep, dipilih otomatis oleh Router
+- 🌐 **Web UI Modern** — Antarmuka chat interaktif (React) dengan Conversation History
+- 📚 **Knowledge Base** — Ingatan jangka panjang (Episodic Memory) berbasis SQLite
 - 🔎 **Semantic Search** — Cari kode berdasarkan makna, bukan keyword
 - 💾 **Task Queue** — Task disimpan, bisa dilanjutkan setelah restart
-- 🧹 **Memory Compression** — Otomatis ringkas riwayat percakapan
-- 📋 **ClickUp Integration** — Lihat, buat, update task langsung dari terminal
+- 📋 **ClickUp Integration** — Manajemen task dari chat dengan cache super cepat
 - 🔒 **Workspace Lock** — Hanya akses 1 workspace ClickUp yang dikonfigurasi
 - ⚡ **100% Lokal** — Semua diproses di komputer Anda via Ollama
 
@@ -87,9 +88,30 @@ cp .env.example .env
 # Edit .env sesuai kebutuhan (opsional)
 ```
 
-### 5. Jalankan
+### 5. Jalankan Web UI (Direkomendasikan)
 
+Buka 2 terminal terpisah.
+
+**Terminal 1 (Backend API):**
 ```bash
+cd Zegion-AI/Python
+python api.py
+```
+
+**Terminal 2 (Frontend React):**
+```bash
+cd Zegion-AI/web
+npm install
+npm run dev
+```
+
+Buka browser dan akses **`http://localhost:5173`**.
+
+### 6. Jalankan Terminal UI (Alternatif CLI)
+
+Jika hanya ingin versi terminal (tanpa Web UI):
+```bash
+cd Zegion-AI/Python
 python main.py
 ```
 
@@ -155,32 +177,27 @@ You: update task abc123 status "in progress"
 ## 📁 Struktur Project
 
 ```
-Python/
-├── main.py              # Entry point & orchestrator
-├── config.py            # Konfigurasi (load dari .env)
-├── requirements.txt     # Dependencies
-├── .env.example         # Template environment
+├── Python/
+│   ├── api.py               # FastAPI Server (WebSocket + REST)
+│   ├── main.py              # Terminal UI (CLI)
+│   ├── core.py              # Logika inti pipeline AI
+│   ├── db.py                # Database layer (SQLite) & Knowledge Base
+│   ├── config.py            # Konfigurasi
+│   ├── requirements.txt     
+│   │
+│   ├── agents/              # 🤖 AI Agents (Router, Planner, Executor, Critic, dll)
+│   ├── tools/               # 🔧 Tool functions (File Ops, ClickUp, Semantic)
+│   │
+│   └── data/                # 💾 Auto-generated data
+│       └── zegion.db        # SQLite database (History & Knowledge Base)
 │
-├── agents/              # 🤖 AI Agents
-│   ├── router.py        # Auto-detect mode (rule-based)
-│   ├── planner.py       # Buat rencana eksekusi
-│   ├── executor.py      # Jalankan tools
-│   ├── critic.py        # Cek kebenaran (apa yang salah?)
-│   ├── reflection.py    # Cek kualitas (apa yang bisa lebih baik?)
-│   ├── memory.py        # Kompresi riwayat percakapan
-│   └── task_queue.py    # Persistensi task
-│
-├── tools/               # 🔧 Tool functions
-│   ├── file_ops.py      # Read, write, list, search, execute
-│   ├── summarizer.py    # AI summarization
-│   ├── semantic.py      # Embedding & semantic search
-│   └── clickup.py       # ClickUp API wrapper
-│
-└── data/                # 💾 Cache & state (auto-generated, gitignored)
-    ├── memory.json
-    ├── task_queue.json
-    ├── file_summaries.json
-    └── embeddings_cache.json
+└── web/                     # 🌐 Frontend React (Vite)
+    ├── src/
+    │   ├── components/      # UI (Sidebar, ChatInput, MessageList)
+    │   ├── hooks/           # useChat (WebSocket state manager)
+    │   └── index.css        # Premium Dark Theme
+    ├── package.json
+    └── index.html
 ```
 
 ## 🔧 Tools yang Tersedia

@@ -13,14 +13,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agents.router import mode_label
 from config import AGENT_NAME, AGENT_VERSION
-from core import handle_message, quick_init
+from core import handle_message, quick_init, smart_delete_conversation
 from db import (
     init_db,
     create_conversation,
     get_conversation,
     list_conversations,
     get_messages,
-    delete_conversation,
+    kb_list,
+    kb_get,
+    kb_update,
+    kb_delete,
 )
 
 
@@ -126,8 +129,46 @@ async def get_conversation_messages(conv_id: str):
 
 @app.delete("/conversations/{conv_id}")
 async def delete_conv(conv_id: str):
-    """Hapus conversation beserta semua messages-nya."""
-    ok = delete_conversation(conv_id)
+    """
+    Smart delete: cek importance → summarize jika penting → simpan ke KB → hapus.
+    Bisa lambat jika perlu AI call untuk summarize.
+    """
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, smart_delete_conversation, conv_id
+    )
+    return result
+
+
+# =========================
+# KNOWLEDGE BASE ENDPOINTS
+# =========================
+
+@app.get("/knowledge-base")
+async def get_knowledge_base():
+    """List semua KB entries."""
+    entries = kb_list(limit=100)
+    return {"entries": entries, "total": len(entries)}
+
+
+@app.patch("/knowledge-base/{entry_id}")
+async def update_kb_entry(entry_id: int, body: dict):
+    """
+    Update (koreksi) KB entry.
+    Body: {"content": "...", "importance": "high|medium|low"}
+    """
+    content = body.get("content")
+    importance = body.get("importance")
+    updated = kb_update(entry_id, content=content, importance=importance)
+    if not updated:
+        return {"error": "Entry not found"}
+    return updated
+
+
+@app.delete("/knowledge-base/{entry_id}")
+async def delete_kb_entry(entry_id: int):
+    """Hapus KB entry (safety valve: kalau ternyata salah)."""
+    ok = kb_delete(entry_id)
     return {"deleted": ok}
 
 
