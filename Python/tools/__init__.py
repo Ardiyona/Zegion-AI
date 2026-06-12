@@ -1,5 +1,5 @@
 # tools/__init__.py
-# Re-export fungsi tools (operasi file + ClickUp API)
+# Re-export fungsi tools
 
 from tools.file_ops import (
     list_files,
@@ -20,12 +20,18 @@ from tools.semantic import (
     semantic_search,
 )
 
+# ClickUp — Low-level (navigasi eksplisit)
 from tools.clickup import (
     clickup_list_spaces,
     clickup_list_lists,
     clickup_list_tasks,
-    clickup_get_task,
-    clickup_create_task,
-    clickup_update_task,
-    clickup_add_comment,
+)
+
+# ClickUp — High-level (intent-based)
+from tools.clickup import (
+    clickup_get_tasks,
+    clickup_get_task_detail,
+    clickup_smart_create_task,
+    clickup_smart_update_task,
+    clickup_smart_add_comment,
 )

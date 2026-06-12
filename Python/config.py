@@ -61,6 +61,7 @@ KEEP_RECENT_MESSAGES = int(os.getenv("KEEP_RECENT_MESSAGES", "20"))
 
 CLICKUP_API_KEY = os.getenv("CLICKUP_API_KEY", "")
 CLICKUP_WORKSPACE_ID = os.getenv("CLICKUP_WORKSPACE_ID", "")
+CLICKUP_CACHE_TTL = int(os.getenv("CLICKUP_CACHE_TTL", "300"))  # detik, default 5 menit
 
 # =========================
 # SYSTEM PROMPT

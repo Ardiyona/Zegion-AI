@@ -1,5 +1,6 @@
+import time
 import requests
-from config import CLICKUP_API_KEY, CLICKUP_WORKSPACE_ID
+from config import CLICKUP_API_KEY, CLICKUP_WORKSPACE_ID, CLICKUP_CACHE_TTL
 
 
 # =========================
@@ -14,7 +15,7 @@ HEADERS = {
 
 
 # =========================
-# VALIDATION
+# VALIDATION & HTTP
 # =========================
 
 def _validate():
@@ -49,22 +50,136 @@ def _safe_request(method, url, **kwargs):
         return f"Error: {str(e)}"
 
 
-# =========================
-# CLICKUP TOOLS
-# =========================
+# =========================================================
+# WORKSPACE STRUCTURE CACHE
+# Hanya cache Space, Folder, List (jarang berubah).
+# Task SELALU diambil realtime dari API.
+# =========================================================
+
+_cache = {
+    "spaces": [],
+    "lists": [],
+    "last_fetched": 0,
+    "ttl": CLICKUP_CACHE_TTL,
+}
+
+
+def _is_cache_valid():
+    """Cek apakah cache masih fresh."""
+    return (
+        _cache["last_fetched"] > 0
+        and (time.time() - _cache["last_fetched"]) < _cache["ttl"]
+        and len(_cache["spaces"]) > 0
+    )
+
+
+def _refresh_cache():
+    """Fetch ulang semua spaces & lists dari API, simpan ke cache."""
+    # Fetch spaces
+    data = _safe_request("GET", f"{BASE_URL}/team/{CLICKUP_WORKSPACE_ID}/space")
+    if isinstance(data, str):
+        return data
+
+    spaces = data.get("spaces", [])
+    _cache["spaces"] = spaces
+
+    # Fetch semua lists dari semua spaces
+    all_lists = []
+    for space in spaces:
+        # Folderless lists
+        list_data = _safe_request("GET", f"{BASE_URL}/space/{space['id']}/list")
+        if isinstance(list_data, dict):
+            for lst in list_data.get("lists", []):
+                lst["_space_id"] = space["id"]
+                lst["_space_name"] = space["name"]
+                lst["_folder"] = "—"
+                all_lists.append(lst)
+
+        # Lists inside folders
+        folder_data = _safe_request("GET", f"{BASE_URL}/space/{space['id']}/folder")
+        if isinstance(folder_data, dict):
+            for folder in folder_data.get("folders", []):
+                for lst in folder.get("lists", []):
+                    lst["_space_id"] = space["id"]
+                    lst["_space_name"] = space["name"]
+                    lst["_folder"] = folder["name"]
+                    all_lists.append(lst)
+
+    _cache["lists"] = all_lists
+    _cache["last_fetched"] = time.time()
+
+    return None  # No error
+
+
+def _invalidate_cache():
+    """Paksa refresh cache di panggilan berikutnya."""
+    _cache["last_fetched"] = 0
+
+
+# =========================================================
+# INTERNAL HELPERS (menggunakan cache)
+# =========================================================
+
+def _get_all_spaces():
+    """Return list of space dicts (dari cache jika masih valid)."""
+    if not _is_cache_valid():
+        err = _refresh_cache()
+        if err:
+            return err
+    return _cache["spaces"]
+
+
+def _get_all_lists(space_id):
+    """Return semua list dari 1 space (dari cache)."""
+    if not _is_cache_valid():
+        err = _refresh_cache()
+        if err:
+            return err
+    return [l for l in _cache["lists"] if l.get("_space_id") == space_id]
+
+
+def _get_all_lists_in_workspace():
+    """Return semua list dari SEMUA space (dari cache)."""
+    if not _is_cache_valid():
+        err = _refresh_cache()
+        if err:
+            return err
+    return _cache["lists"]
+
+
+def _find_list_by_name(list_name):
+    """Cari list berdasarkan nama (case-insensitive). Return list dict atau error."""
+    all_lists = _get_all_lists_in_workspace()
+    if isinstance(all_lists, str):
+        return all_lists
+
+    # Exact match dulu
+    for lst in all_lists:
+        if lst["name"].lower() == list_name.lower():
+            return lst
+
+    # Partial match
+    for lst in all_lists:
+        if list_name.lower() in lst["name"].lower():
+            return lst
+
+    names = ", ".join(f"'{l['name']}'" for l in all_lists[:10])
+    return f"Error: List '{list_name}' tidak ditemukan. List yang tersedia: {names}"
+
+
+# =========================================================
+# LOW-LEVEL TOOLS (navigasi eksplisit, untuk kasus kompleks)
+# =========================================================
 
 def clickup_list_spaces():
-    """Lihat semua Space di workspace yang dikonfigurasi."""
+    """[LOW-LEVEL] Lihat semua Space di workspace."""
     err = _validate()
     if err:
         return err
 
-    data = _safe_request("GET", f"{BASE_URL}/team/{CLICKUP_WORKSPACE_ID}/space")
-
-    if isinstance(data, str):  # Error string
-        return data
-
-    spaces = data.get("spaces", [])
+    spaces = _get_all_spaces()
+    if isinstance(spaces, str):
+        return spaces
     if not spaces:
         return "Tidak ada Space ditemukan di workspace ini."
 
@@ -76,27 +191,14 @@ def clickup_list_spaces():
 
 
 def clickup_list_lists(space_id):
-    """Lihat semua List di sebuah Space."""
+    """[LOW-LEVEL] Lihat semua List di sebuah Space."""
     err = _validate()
     if err:
         return err
 
-    # Ambil folderless lists
-    data = _safe_request("GET", f"{BASE_URL}/space/{space_id}/list")
-
-    if isinstance(data, str):
-        return data
-
-    lists = data.get("lists", [])
-
-    # Juga ambil lists di dalam folders
-    folder_data = _safe_request("GET", f"{BASE_URL}/space/{space_id}/folder")
-    if isinstance(folder_data, dict):
-        for folder in folder_data.get("folders", []):
-            for lst in folder.get("lists", []):
-                lst["_folder"] = folder["name"]
-                lists.append(lst)
-
+    lists = _get_all_lists(space_id)
+    if isinstance(lists, str):
+        return lists
     if not lists:
         return "Tidak ada List ditemukan di Space ini."
 
@@ -110,7 +212,7 @@ def clickup_list_lists(space_id):
 
 
 def clickup_list_tasks(list_id):
-    """Lihat task di sebuah List."""
+    """[LOW-LEVEL] Lihat task di sebuah List (by ID)."""
     err = _validate()
     if err:
         return err
@@ -127,33 +229,82 @@ def clickup_list_tasks(list_id):
     if not tasks:
         return "Tidak ada task di List ini."
 
-    lines = [f"📝 {len(tasks)} task ditemukan:\n"]
-    for t in tasks:
-        status = t.get("status", {}).get("status", "?")
-        priority = t.get("priority", {})
-        priority_name = priority.get("priority", "none") if priority else "none"
-        assignees = ", ".join(a.get("username", "?") for a in t.get("assignees", []))
-
-        lines.append(f"  • [{status.upper()}] {t['name']}")
-        lines.append(f"    ID: {t['id']} | Priority: {priority_name} | Assignee: {assignees or '—'}")
-
-    return "\n".join(lines)
+    return _format_task_list(tasks)
 
 
-def clickup_get_task(task_id):
-    """Lihat detail 1 task."""
+# =========================================================
+# HIGH-LEVEL TOOLS (intent-based, Planner cukup panggil 1x)
+# =========================================================
+
+def clickup_get_tasks(list_name=None, status=None):
+    """
+    [HIGH-LEVEL] Lihat semua task.
+    - Tanpa parameter → semua task di semua list
+    - list_name → filter by nama list (auto-resolve ID)
+    - status → filter by status (e.g. "open", "in progress")
+    """
+    err = _validate()
+    if err:
+        return err
+
+    if list_name:
+        # Cari list by nama
+        lst = _find_list_by_name(list_name)
+        if isinstance(lst, str):
+            return lst
+
+        data = _safe_request("GET", f"{BASE_URL}/list/{lst['id']}/task", params={
+            "subtasks": "true",
+            "include_closed": "true",
+        })
+        if isinstance(data, str):
+            return data
+
+        tasks = data.get("tasks", [])
+        source = f"List '{lst['name']}'"
+    else:
+        # Ambil dari SEMUA list
+        all_lists = _get_all_lists_in_workspace()
+        if isinstance(all_lists, str):
+            return all_lists
+
+        tasks = []
+        for lst in all_lists:
+            data = _safe_request("GET", f"{BASE_URL}/list/{lst['id']}/task", params={
+                "subtasks": "true",
+                "include_closed": "true",
+            })
+            if isinstance(data, dict):
+                for t in data.get("tasks", []):
+                    t["_list_name"] = lst["name"]
+                    tasks.append(t)
+        source = "seluruh workspace"
+
+    # Filter by status
+    if status and tasks:
+        tasks = [
+            t for t in tasks
+            if t.get("status", {}).get("status", "").lower() == status.lower()
+        ]
+
+    if not tasks:
+        return f"Tidak ada task ditemukan di {source}."
+
+    return _format_task_list(tasks, show_list=not list_name)
+
+
+def clickup_get_task_detail(task_id):
+    """[HIGH-LEVEL] Lihat detail lengkap 1 task."""
     err = _validate()
     if err:
         return err
 
     data = _safe_request("GET", f"{BASE_URL}/task/{task_id}")
-
     if isinstance(data, str):
         return data
 
-    # Validasi workspace — pastikan task milik workspace yang benar
-    team_id = data.get("team_id", "")
-    if str(team_id) != str(CLICKUP_WORKSPACE_ID):
+    # Validasi workspace
+    if str(data.get("team_id", "")) != str(CLICKUP_WORKSPACE_ID):
         return "Error: Task ini bukan milik workspace yang dikonfigurasi."
 
     status = data.get("status", {}).get("status", "?")
@@ -163,10 +314,12 @@ def clickup_get_task(task_id):
     description = data.get("description", "Tidak ada deskripsi.")
     due_date = data.get("due_date", None)
     tags = ", ".join(t.get("name", "") for t in data.get("tags", []))
+    list_info = data.get("list", {}).get("name", "?")
 
     lines = [
         f"📌 {data['name']}",
         f"   ID: {data['id']}",
+        f"   List: {list_info}",
         f"   Status: {status}",
         f"   Priority: {priority_name}",
         f"   Assignee: {assignees or '—'}",
@@ -178,41 +331,43 @@ def clickup_get_task(task_id):
     return "\n".join(lines)
 
 
-def clickup_create_task(list_id, name, description="", status=None, priority=None):
-    """Buat task baru di List tertentu."""
+def clickup_smart_create_task(name, list_name, description="", priority=None):
+    """
+    [HIGH-LEVEL] Buat task baru — cari list otomatis by nama.
+    Tidak perlu tahu list_id.
+    """
     err = _validate()
     if err:
         return err
+
+    # Resolve list_name → list_id
+    lst = _find_list_by_name(list_name)
+    if isinstance(lst, str):
+        return lst
 
     payload = {
         "name": name,
         "description": description,
     }
 
-    if status:
-        payload["status"] = status
     if priority:
-        # ClickUp priority: 1=urgent, 2=high, 3=normal, 4=low
-        priority_map = {
-            "urgent": 1, "high": 2, "normal": 3, "low": 4
-        }
+        priority_map = {"urgent": 1, "high": 2, "normal": 3, "low": 4}
         payload["priority"] = priority_map.get(priority.lower(), 3)
 
-    data = _safe_request("POST", f"{BASE_URL}/list/{list_id}/task", json=payload)
-
+    data = _safe_request("POST", f"{BASE_URL}/list/{lst['id']}/task", json=payload)
     if isinstance(data, str):
         return data
 
-    return f"✅ Task '{data.get('name', name)}' berhasil dibuat! (ID: {data.get('id', '?')})"
+    return f"✅ Task '{data.get('name', name)}' berhasil dibuat di list '{lst['name']}'! (ID: {data.get('id', '?')})"
 
 
-def clickup_update_task(task_id, status=None, priority=None, name=None):
-    """Update task yang sudah ada."""
+def clickup_smart_update_task(task_id, status=None, priority=None, name=None):
+    """[HIGH-LEVEL] Update task. Validasi workspace otomatis."""
     err = _validate()
     if err:
         return err
 
-    # Validasi workspace dulu
+    # Validasi workspace
     task_data = _safe_request("GET", f"{BASE_URL}/task/{task_id}")
     if isinstance(task_data, str):
         return task_data
@@ -232,15 +387,14 @@ def clickup_update_task(task_id, status=None, priority=None, name=None):
         return "Error: Tidak ada yang diupdate. Berikan status, priority, atau name."
 
     data = _safe_request("PUT", f"{BASE_URL}/task/{task_id}", json=payload)
-
     if isinstance(data, str):
         return data
 
     return f"✅ Task '{data.get('name', task_id)}' berhasil diupdate!"
 
 
-def clickup_add_comment(task_id, comment_text):
-    """Tambah comment ke task."""
+def clickup_smart_add_comment(task_id, comment_text):
+    """[HIGH-LEVEL] Tambah comment. Validasi workspace otomatis."""
     err = _validate()
     if err:
         return err
@@ -252,13 +406,33 @@ def clickup_add_comment(task_id, comment_text):
     if str(task_data.get("team_id", "")) != str(CLICKUP_WORKSPACE_ID):
         return "Error: Task ini bukan milik workspace yang dikonfigurasi."
 
-    payload = {
+    data = _safe_request("POST", f"{BASE_URL}/task/{task_id}/comment", json={
         "comment_text": comment_text,
-    }
-
-    data = _safe_request("POST", f"{BASE_URL}/task/{task_id}/comment", json=payload)
-
+    })
     if isinstance(data, str):
         return data
 
     return f"💬 Comment berhasil ditambahkan ke task {task_id}!"
+
+
+# =========================================================
+# FORMATTING HELPERS
+# =========================================================
+
+def _format_task_list(tasks, show_list=False):
+    """Format daftar task menjadi teks readable."""
+    lines = [f"📝 {len(tasks)} task ditemukan:\n"]
+    for t in tasks:
+        status = t.get("status", {}).get("status", "?")
+        priority = t.get("priority", {})
+        priority_name = priority.get("priority", "none") if priority else "none"
+        assignees = ", ".join(a.get("username", "?") for a in t.get("assignees", []))
+
+        lines.append(f"  • [{status.upper()}] {t['name']}")
+        info = f"    ID: {t['id']} | Priority: {priority_name} | Assignee: {assignees or '—'}"
+        if show_list:
+            list_name = t.get("_list_name", t.get("list", {}).get("name", "?"))
+            info += f" | List: {list_name}"
+        lines.append(info)
+
+    return "\n".join(lines)

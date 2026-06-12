@@ -15,13 +15,16 @@ from tools.semantic import (
     semantic_search,
 )
 from tools.clickup import (
+    # Low-level
     clickup_list_spaces,
     clickup_list_lists,
     clickup_list_tasks,
-    clickup_get_task,
-    clickup_create_task,
-    clickup_update_task,
-    clickup_add_comment,
+    # High-level
+    clickup_get_tasks,
+    clickup_get_task_detail,
+    clickup_smart_create_task,
+    clickup_smart_update_task,
+    clickup_smart_add_comment,
 )
 
 
@@ -48,17 +51,23 @@ isi file
 6. [SUMMARIZE_FILE path="file.py"]
 7. [SEMANTIC_SEARCH query="deskripsi"]
 
-=== CLICKUP TOOLS ===
-8. [CLICKUP_LIST_SPACES]
-9. [CLICKUP_LIST_LISTS space_id="id"]
-10. [CLICKUP_LIST_TASKS list_id="id"]
-11. [CLICKUP_GET_TASK task_id="id"]
-12. [CLICKUP_CREATE_TASK list_id="id" name="nama" description="desc" priority="normal"]
+=== CLICKUP TOOLS (utama) ===
+8. [CLICKUP_GET_TASKS] → semua task di workspace
+9. [CLICKUP_GET_TASKS list_name="nama list"] → task di list tertentu
+10. [CLICKUP_GET_TASKS status="open"] → filter by status
+11. [CLICKUP_GET_TASK_DETAIL task_id="id"] → detail 1 task
+12. [CLICKUP_CREATE_TASK list_name="nama list" name="nama task" description="desc" priority="normal"]
 13. [CLICKUP_UPDATE_TASK task_id="id" status="done" priority="high"]
 14. [CLICKUP_ADD_COMMENT task_id="id" comment="teks"]
 
+=== CLICKUP LOW-LEVEL (untuk navigasi) ===
+15. [CLICKUP_LIST_SPACES]
+16. [CLICKUP_LIST_LISTS space_id="id"]
+17. [CLICKUP_LIST_TASKS list_id="id"]
+
 ATURAN:
 - Lakukan SATU tool per respons.
+- Gunakan CLICKUP tools utama (8-14) untuk operasi ClickUp. Low-level (15-17) hanya jika perlu navigasi detail.
 - Jika hasil EXECUTE menunjukkan error, PERBAIKI file lalu EXECUTE lagi.
 - Jika semua langkah selesai, tulis [DONE] diikuti ringkasan hasil.
 - Jika tidak perlu tool, langsung tulis [DONE] diikuti jawaban.
@@ -139,7 +148,55 @@ def _handle_tools(ai_response):
         return True, "WRITE_FILE", path, result
 
     # =========================
-    # CLICKUP TOOLS
+    # CLICKUP HIGH-LEVEL TOOLS
+    # =========================
+
+    # CLICKUP GET TASKS (high-level — auto-resolve)
+    m = re.search(r'\[CLICKUP_GET_TASKS(?:\s+list_name="(.*?)")?(?:\s+status="(.*?)")?\]', ai_response)
+    if m:
+        list_name = m.group(1)
+        status = m.group(2)
+        result = clickup_get_tasks(list_name=list_name, status=status)
+        label = list_name or status or "all"
+        return True, "CLICKUP_GET_TASKS", label, result
+
+    # CLICKUP GET TASK DETAIL (high-level)
+    m = re.search(r'\[CLICKUP_GET_TASK_DETAIL task_id="(.*?)"\]', ai_response)
+    if m:
+        task_id = m.group(1)
+        result = clickup_get_task_detail(task_id)
+        return True, "CLICKUP_GET_TASK_DETAIL", task_id, result
+
+    # CLICKUP CREATE TASK (high-level — by list name)
+    m = re.search(r'\[CLICKUP_CREATE_TASK list_name="(.*?)" name="(.*?)"(?:\s+description="(.*?)")?(?:\s+priority="(.*?)")?\]', ai_response)
+    if m:
+        list_name = m.group(1)
+        name = m.group(2)
+        desc = m.group(3) or ""
+        priority = m.group(4)
+        result = clickup_smart_create_task(name, list_name, desc, priority=priority)
+        return True, "CLICKUP_CREATE_TASK", name, result
+
+    # CLICKUP UPDATE TASK (high-level)
+    m = re.search(r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?\]', ai_response)
+    if m:
+        task_id = m.group(1)
+        status = m.group(2)
+        priority = m.group(3)
+        name = m.group(4)
+        result = clickup_smart_update_task(task_id, status=status, priority=priority, name=name)
+        return True, "CLICKUP_UPDATE_TASK", task_id, result
+
+    # CLICKUP ADD COMMENT (high-level)
+    m = re.search(r'\[CLICKUP_ADD_COMMENT task_id="(.*?)" comment="(.*?)"\]', ai_response, re.DOTALL)
+    if m:
+        task_id = m.group(1)
+        comment = m.group(2)
+        result = clickup_smart_add_comment(task_id, comment)
+        return True, "CLICKUP_ADD_COMMENT", task_id, result
+
+    # =========================
+    # CLICKUP LOW-LEVEL TOOLS (navigasi)
     # =========================
 
     # CLICKUP LIST SPACES
@@ -154,47 +211,12 @@ def _handle_tools(ai_response):
         result = clickup_list_lists(space_id)
         return True, "CLICKUP_LIST_LISTS", space_id, result
 
-    # CLICKUP LIST TASKS
+    # CLICKUP LIST TASKS (low-level by ID)
     m = re.search(r'\[CLICKUP_LIST_TASKS list_id="(.*?)"\]', ai_response)
     if m:
         list_id = m.group(1)
         result = clickup_list_tasks(list_id)
         return True, "CLICKUP_LIST_TASKS", list_id, result
-
-    # CLICKUP GET TASK
-    m = re.search(r'\[CLICKUP_GET_TASK task_id="(.*?)"\]', ai_response)
-    if m:
-        task_id = m.group(1)
-        result = clickup_get_task(task_id)
-        return True, "CLICKUP_GET_TASK", task_id, result
-
-    # CLICKUP CREATE TASK
-    m = re.search(r'\[CLICKUP_CREATE_TASK list_id="(.*?)" name="(.*?)"(?:\s+description="(.*?)")?(?:\s+priority="(.*?)")?\]', ai_response)
-    if m:
-        list_id = m.group(1)
-        name = m.group(2)
-        desc = m.group(3) or ""
-        priority = m.group(4)
-        result = clickup_create_task(list_id, name, desc, priority=priority)
-        return True, "CLICKUP_CREATE_TASK", name, result
-
-    # CLICKUP UPDATE TASK
-    m = re.search(r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?\]', ai_response)
-    if m:
-        task_id = m.group(1)
-        status = m.group(2)
-        priority = m.group(3)
-        name = m.group(4)
-        result = clickup_update_task(task_id, status=status, priority=priority, name=name)
-        return True, "CLICKUP_UPDATE_TASK", task_id, result
-
-    # CLICKUP ADD COMMENT
-    m = re.search(r'\[CLICKUP_ADD_COMMENT task_id="(.*?)" comment="(.*?)"\]', ai_response, re.DOTALL)
-    if m:
-        task_id = m.group(1)
-        comment = m.group(2)
-        result = clickup_add_comment(task_id, comment)
-        return True, "CLICKUP_ADD_COMMENT", task_id, result
 
     return False, None, None, None
 
