@@ -228,6 +228,97 @@ body {
 }
 
 /* ========================= */
+/* CONVERSATION LIST         */
+/* ========================= */
+
+.conv-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition);
+  position: relative;
+  min-height: 52px;
+}
+
+.conv-item:hover {
+  background: var(--bg-hover);
+}
+
+.conv-item.active {
+  background: var(--accent-dim);
+  border: 1px solid rgba(124, 106, 255, 0.15);
+}
+
+.conv-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.conv-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.conv-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-item.active .conv-title {
+  color: var(--accent-hover);
+}
+
+.conv-meta {
+  display: flex;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.conv-delete {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: all var(--transition);
+}
+
+.conv-delete:hover {
+  background: var(--error);
+  border-color: var(--error);
+  color: white;
+}
+
+
+/* ========================= */
 /* MAIN CHAT AREA            */
 /* ========================= */
 

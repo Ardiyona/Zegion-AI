@@ -5,17 +5,26 @@ Jalankan: python api.py
 
 import asyncio
 import json
-import os
-from contextlib import asynccontextmanager
 
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from agents.router import mode_label
 from config import AGENT_NAME, AGENT_VERSION
-from core import handle_message, load_memory
+from core import handle_message, quick_init, smart_delete_conversation
+from db import (
+    init_db,
+    create_conversation,
+    get_conversation,
+    list_conversations,
+    get_messages,
+    kb_list,
+    kb_get,
+    kb_update,
+    kb_delete,
+)
 
 
 # =========================
@@ -24,36 +33,28 @@ from core import handle_message, load_memory
 
 _state = {
     "project_index": "",
-    "messages": [],
     "ready": False,
 }
 
 
 # =========================
-# LIFESPAN (startup/shutdown)
+# LIFESPAN
 # =========================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Startup ringan — hanya load memory dari file.
-    Build index/embeddings dilakukan lazy saat pesan pertama masuk.
-    """
+    """Startup ringan: init DB + migrasi JSON lama. Tanpa Ollama."""
     print(f"\n[Zegion] {AGENT_NAME} v{AGENT_VERSION} API starting...")
-
-    # Load memory dari disk (cepat, tidak butuh Ollama)
-    _state["messages"] = load_memory()
-    _state["project_index"] = ""
+    quick_init()
     _state["ready"] = True
-
     print(f"[Zegion] API ready at http://localhost:8000")
-    print(f"[Zegion] Open http://localhost:8000 or React at http://localhost:5173\n")
+    print(f"[Zegion] React UI at http://localhost:5173\n")
     yield
     print(f"[Zegion] {AGENT_NAME} shutting down...")
 
 
 # =========================
-# FASTAPI APP
+# APP
 # =========================
 
 app = FastAPI(
@@ -62,7 +63,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — izinkan React dev server (localhost:5173 / 3000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:8000"],
@@ -73,61 +73,125 @@ app.add_middleware(
 
 
 # =========================
-# REST ENDPOINTS
+# GENERAL ENDPOINTS
 # =========================
 
 @app.get("/")
 async def root():
-    return {"name": AGENT_NAME, "version": AGENT_VERSION, "status": "ready" if _state["ready"] else "initializing"}
+    return {
+        "name": AGENT_NAME,
+        "version": AGENT_VERSION,
+        "status": "ready" if _state["ready"] else "initializing",
+    }
 
 
 @app.get("/status")
 async def status():
-    return {
-        "ready": _state["ready"],
-        "memory_count": len(_state["messages"]),
-    }
+    return {"ready": _state["ready"]}
 
 
-@app.get("/history")
-async def get_history():
-    """Return riwayat percakapan (hanya user + assistant, bukan system)."""
-    history = [
-        {"role": msg["role"], "content": msg["content"]}
-        for msg in _state["messages"]
-        if msg["role"] in ("user", "assistant")
-    ]
-    return {"history": history}
+# =========================
+# CONVERSATION ENDPOINTS
+# =========================
+
+@app.get("/conversations")
+async def get_conversations():
+    """List semua conversation, diurutkan dari terbaru."""
+    convs = list_conversations(limit=100)
+    return {"conversations": convs}
 
 
-@app.delete("/history")
-async def clear_history():
-    """Hapus semua riwayat percakapan."""
-    _state["messages"] = []
-    return {"status": "cleared"}
+@app.post("/conversations")
+async def new_conversation():
+    """Buat conversation baru (kosong)."""
+    conv = create_conversation()
+    return conv
+
+
+@app.get("/conversations/{conv_id}")
+async def get_conversation_detail(conv_id: str):
+    """Detail 1 conversation."""
+    conv = get_conversation(conv_id)
+    if not conv:
+        return {"error": "Conversation not found"}, 404
+    return conv
+
+
+@app.get("/conversations/{conv_id}/messages")
+async def get_conversation_messages(conv_id: str):
+    """Ambil semua messages dari 1 conversation."""
+    conv = get_conversation(conv_id)
+    if not conv:
+        return {"error": "Conversation not found"}
+    msgs = get_messages(conv_id)
+    return {"messages": msgs}
+
+
+@app.delete("/conversations/{conv_id}")
+async def delete_conv(conv_id: str):
+    """
+    Smart delete: cek importance → summarize jika penting → simpan ke KB → hapus.
+    Bisa lambat jika perlu AI call untuk summarize.
+    """
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, smart_delete_conversation, conv_id
+    )
+    return result
+
+
+# =========================
+# KNOWLEDGE BASE ENDPOINTS
+# =========================
+
+@app.get("/knowledge-base")
+async def get_knowledge_base():
+    """List semua KB entries."""
+    entries = kb_list(limit=100)
+    return {"entries": entries, "total": len(entries)}
+
+
+@app.patch("/knowledge-base/{entry_id}")
+async def update_kb_entry(entry_id: int, body: dict):
+    """
+    Update (koreksi) KB entry.
+    Body: {"content": "...", "importance": "high|medium|low"}
+    """
+    content = body.get("content")
+    importance = body.get("importance")
+    updated = kb_update(entry_id, content=content, importance=importance)
+    if not updated:
+        return {"error": "Entry not found"}
+    return updated
+
+
+@app.delete("/knowledge-base/{entry_id}")
+async def delete_kb_entry(entry_id: int):
+    """Hapus KB entry (safety valve: kalau ternyata salah)."""
+    ok = kb_delete(entry_id)
+    return {"deleted": ok}
 
 
 # =========================
 # WEBSOCKET CHAT
 # =========================
 
-@app.websocket("/ws")
-async def websocket_chat(websocket: WebSocket):
+@app.websocket("/ws/{conv_id}")
+async def websocket_chat(websocket: WebSocket, conv_id: str):
     """
-    WebSocket endpoint untuk chat realtime.
+    WebSocket per conversation.
 
     Client kirim: {"message": "halo"}
     Server kirim:
-      {"type": "thinking", "mode": "💬 Chat"}
-      {"type": "response", "text": "...", "mode": "💬 Chat", "plan": [...]}
+      {"type": "thinking"}
+      {"type": "response", "text": "...", "mode": "...", "mode_key": "...", "plan": [...], "conv_id": "..."}
       {"type": "error", "text": "..."}
     """
     await websocket.accept()
-    print(f"[WS] Client connected")
+    print(f"[WS] Client connected → conv: {conv_id[:8]}...")
 
     try:
         while True:
-            # Terima pesan dari React
             raw = await websocket.receive_text()
 
             try:
@@ -139,50 +203,39 @@ async def websocket_chat(websocket: WebSocket):
             if not user_input:
                 continue
 
-            print(f"[WS] User: {user_input[:80]}")
+            print(f"[WS] [{conv_id[:8]}] User: {user_input[:60]}")
 
-            # Kirim status "sedang berpikir"
-            await websocket.send_json({
-                "type": "thinking",
-                "text": "Zegion sedang berpikir...",
-            })
+            await websocket.send_json({"type": "thinking"})
 
-            # Proses di thread terpisah agar tidak block WebSocket
             loop = asyncio.get_event_loop()
             try:
-                response, new_messages, mode, plan = await loop.run_in_executor(
+                response, new_conv_id, mode, plan = await loop.run_in_executor(
                     None,
                     handle_message,
                     user_input,
-                    _state["messages"],
+                    conv_id,
                     _state["project_index"],
                 )
-                # Update global state
-                _state["messages"] = new_messages
-
             except Exception as e:
                 print(f"[WS] Error: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "text": f"Terjadi error: {str(e)}",
-                })
+                await websocket.send_json({"type": "error", "text": str(e)})
                 continue
 
-            # Kirim response ke React
             await websocket.send_json({
                 "type": "response",
                 "text": response,
                 "mode": mode_label(mode),
                 "mode_key": mode,
                 "plan": plan,
+                "conv_id": new_conv_id,
             })
 
-            print(f"[WS] Response sent ({mode_label(mode)})")
+            print(f"[WS] [{conv_id[:8]}] Done ({mode_label(mode)})")
 
     except WebSocketDisconnect:
-        print("[WS] Client disconnected")
+        print(f"[WS] Client disconnected → conv: {conv_id[:8]}")
     except Exception as e:
-        print(f"[WS] Unexpected error: {e}")
+        print(f"[WS] Error: {e}")
 
 
 # =========================

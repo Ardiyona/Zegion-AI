@@ -1,85 +1,41 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useChat } from './hooks/useChat';
 import { Sidebar } from './components/Sidebar';
 import { MessageList } from './components/MessageList';
 import { ChatInput } from './components/ChatInput';
-import { useWebSocket } from './hooks/useWebSocket';
 
 const AGENT_NAME = 'Zegion';
 const AGENT_VERSION = '1.0';
 
 export default function App() {
-  const [messages, setMessages] = useState([]);
-  const [lastMode, setLastMode] = useState(null);
+  const {
+    conversations,
+    activeConvId,
+    messages,
+    isThinking,
+    wsStatus,
+    sendMessage,
+    newConversation,
+    switchConversation,
+    deleteConversation,
+  } = useChat();
 
-  const { status, isThinking, sendMessage, setOnMessage } = useWebSocket();
+  const handleSuggestion = (text) => sendMessage(text);
 
-  // Handle incoming WebSocket messages
-  useEffect(() => {
-    setOnMessage((data) => {
-      if (data.type === 'response') {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: data.text,
-            mode: data.mode,
-            mode_key: data.mode_key,
-            plan: data.plan || [],
-          },
-        ]);
-        setLastMode(data.mode_key);
-      } else if (data.type === 'error') {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: `⚠️ ${data.text}`,
-            mode: null,
-          },
-        ]);
-      }
-    });
-  }, [setOnMessage]);
+  const activeConv = conversations.find(c => c.id === activeConvId);
+  const lastMsg = messages.filter(m => m.role === 'assistant').slice(-1)[0];
+  const lastModeKey = lastMsg?.mode_key;
 
-  // Send a message
-  const handleSend = useCallback(
-    (text) => {
-      if (!text.trim() || isThinking) return;
-
-      setMessages((prev) => [
-        ...prev,
-        { role: 'user', content: text },
-      ]);
-
-      sendMessage(text);
-    },
-    [isThinking, sendMessage]
-  );
-
-  // Suggestion chip clicked
-  const handleSuggestion = useCallback(
-    (text) => {
-      handleSend(text);
-    },
-    [handleSend]
-  );
-
-  // New chat — clear local messages (backend keeps memory, just clear UI)
-  const handleNewChat = useCallback(() => {
-    setMessages([]);
-    setLastMode(null);
-  }, []);
-
-  const getModeClass = (modeKey) => {
-    if (!modeKey) return '';
-    return modeKey;
-  };
+  const getModeClass = (key) => key || '';
 
   return (
     <div className="app">
       <Sidebar
-        status={status}
-        onNewChat={handleNewChat}
+        conversations={conversations}
+        activeConvId={activeConvId}
+        status={wsStatus}
+        onNewChat={newConversation}
+        onSelectConv={switchConversation}
+        onDeleteConv={deleteConversation}
         agentName={AGENT_NAME}
         agentVersion={AGENT_VERSION}
       />
@@ -88,14 +44,14 @@ export default function App() {
         {/* Header */}
         <header className="chat-header">
           <span className="chat-header-title">
-            Chat dengan {AGENT_NAME}
+            {activeConv?.title || 'New Chat'}
           </span>
           <div className="chat-header-right">
-            {lastMode && (
-              <span className={`mode-badge ${getModeClass(lastMode)}`}>
-                {lastMode === 'chat' && '💬 Chat'}
-                {lastMode === 'quick' && '⚡ Quick'}
-                {lastMode === 'deep' && '🔬 Deep'}
+            {lastModeKey && (
+              <span className={`mode-badge ${getModeClass(lastModeKey)}`}>
+                {lastModeKey === 'chat' && '💬 Chat'}
+                {lastModeKey === 'quick' && '⚡ Quick'}
+                {lastModeKey === 'deep' && '🔬 Deep'}
               </span>
             )}
           </div>
@@ -110,8 +66,8 @@ export default function App() {
 
         {/* Input */}
         <ChatInput
-          onSend={handleSend}
-          disabled={isThinking || status !== 'ready'}
+          onSend={sendMessage}
+          disabled={isThinking || wsStatus !== 'ready'}
         />
       </main>
     </div>

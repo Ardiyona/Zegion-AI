@@ -3,13 +3,9 @@ main.py — Zegion AI Terminal Interface
 Jalankan: python main.py
 """
 
-from agents import (
-    get_pending_tasks,
-    format_pending_tasks,
-)
+from agents import get_pending_tasks, format_pending_tasks
 from agents.router import mode_label
 from config import AGENT_NAME
-
 from core import initialize, handle_message
 
 
@@ -17,13 +13,13 @@ from core import initialize, handle_message
 # STARTUP
 # =========================
 
-project_index, messages = initialize()
+project_index = initialize()
 
 pending = get_pending_tasks()
 if pending:
     print(format_pending_tasks(pending))
 else:
-    print(f"{AGENT_NAME} Siap! 😼")
+    print(f"{AGENT_NAME} Siap!")
 
 print("Commands: exit | resume | /chat | /quick | /deep\n")
 
@@ -32,22 +28,25 @@ print("Commands: exit | resume | /chat | /quick | /deep\n")
 # MAIN LOOP (Terminal UI)
 # =========================
 
+# Setiap sesi terminal = 1 conversation baru
+conv_id = None
+
 while True:
     try:
         user = input("You: ")
     except (KeyboardInterrupt, EOFError):
-        print("\nSampai jumpa! 👋")
+        print("\nSampai jumpa!")
         break
 
     if not user.strip():
         continue
 
     if user.lower() == "exit":
-        print("Sampai jumpa! 👋")
+        print("Sampai jumpa!")
         break
 
-    # Delegate semua logic ke core
-    response, messages, mode, plan = handle_message(user, messages, project_index)
+    # Delegate ke core — conv_id di-manage oleh core (auto-create jika None)
+    response, conv_id, mode, plan = handle_message(user, conv_id, project_index)
 
     print(f"\n[{mode_label(mode)}]")
     print("\n" + "=" * 40)
