@@ -2,3 +2,5 @@ ollama
 requests
 fastapi
 uvicorn[standard]
+duckduckgo-search
+beautifulsoup4

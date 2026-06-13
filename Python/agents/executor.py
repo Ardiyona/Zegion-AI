@@ -14,6 +14,10 @@ from tools.summarizer import (
 from tools.semantic import (
     semantic_search,
 )
+from tools.web_search import (
+    web_search,
+    fetch_url,
+)
 from tools.clickup import (
     # Low-level
     clickup_list_spaces,
@@ -50,6 +54,10 @@ isi file
 5. [EXECUTE path="file.py"]
 6. [SUMMARIZE_FILE path="file.py"]
 7. [SEMANTIC_SEARCH query="deskripsi"]
+
+=== WEB TOOLS ===
+8. [WEB_SEARCH query="kata kunci"] → cari info dari internet via DuckDuckGo
+9. [FETCH_URL url="https://..."] → baca isi halaman web dari URL tertentu
 
 === CLICKUP TOOLS (utama) ===
 8. [CLICKUP_GET_TASKS] → semua task di workspace
@@ -146,6 +154,24 @@ def _handle_tools(ai_response):
         content = m.group(2).replace("\\n", "\n").replace('\\"', '"')
         result = write_file(path, content)
         return True, "WRITE_FILE", path, result
+
+    # =========================
+    # WEB TOOLS
+    # =========================
+
+    # WEB SEARCH
+    m = re.search(r'\[WEB_SEARCH query="(.*?)"\]', ai_response)
+    if m:
+        query = m.group(1)
+        result = web_search(query)
+        return True, "WEB_SEARCH", query, result
+
+    # FETCH URL
+    m = re.search(r'\[FETCH_URL url="(.*?)"\]', ai_response)
+    if m:
+        url = m.group(1)
+        result = fetch_url(url)
+        return True, "FETCH_URL", url, result
 
     # =========================
     # CLICKUP HIGH-LEVEL TOOLS
