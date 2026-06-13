@@ -2,3 +2,8 @@ ollama
 requests
 fastapi
 uvicorn[standard]
+curl_cffi
+beautifulsoup4
+psutil
+httpx
+nvidia-ml-py

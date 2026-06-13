@@ -1,0 +1,32 @@
+export const CURATED_MODELS = [
+  { name: "qwen3:0.6b",      family: "Qwen",      desc: "Ultra-lightweight, fast replies",                          params: "0.6B",  size_gb: 0.4,  vram_required_gb: 1,  ram_required_gb: 2  },
+  { name: "qwen3:1.7b",      family: "Qwen",      desc: "Lightweight with decent reasoning",                        params: "1.7B",  size_gb: 1.1,  vram_required_gb: 2,  ram_required_gb: 4  },
+  { name: "qwen3:4b",        family: "Qwen",      desc: "Best balance for most hardware",                           params: "4B",    size_gb: 2.6,  vram_required_gb: 4,  ram_required_gb: 8  },
+  { name: "qwen3:8b",        family: "Qwen",      desc: "Strong reasoning, needs mid-range GPU",                    params: "8B",    size_gb: 5.2,  vram_required_gb: 6,  ram_required_gb: 12 },
+  { name: "qwen3:14b",       family: "Qwen",      desc: "Near-frontier quality locally",                            params: "14B",   size_gb: 9.0,  vram_required_gb: 10, ram_required_gb: 20 },
+  { name: "qwen3:32b",       family: "Qwen",      desc: "Top-tier reasoning, high-end GPU needed",                  params: "32B",   size_gb: 20.0, vram_required_gb: 22, ram_required_gb: 40 },
+  { name: "llama3.2:1b",     family: "Llama",     desc: "Tiny Llama, great for edge devices",                       params: "1B",    size_gb: 0.8,  vram_required_gb: 1,  ram_required_gb: 3  },
+  { name: "llama3.2:3b",     family: "Llama",     desc: "Capable small model from Meta",                            params: "3B",    size_gb: 2.0,  vram_required_gb: 3,  ram_required_gb: 6  },
+  { name: "llama3.1:8b",     family: "Llama",     desc: "Solid all-rounder from Meta",                              params: "8B",    size_gb: 4.9,  vram_required_gb: 6,  ram_required_gb: 12 },
+  { name: "llama3.3:70b",    family: "Llama",     desc: "Flagship Llama, needs beefy hardware",                     params: "70B",   size_gb: 43.0, vram_required_gb: 48, ram_required_gb: 80 },
+  { name: "mistral:7b",      family: "Mistral",   desc: "Fast and efficient European model",                        params: "7B",    size_gb: 4.1,  vram_required_gb: 5,  ram_required_gb: 10 },
+  { name: "gemma3:2b",       family: "Gemma",     desc: "Google's compact model, punches above weight",             params: "2B",    size_gb: 1.6,  vram_required_gb: 2,  ram_required_gb: 5  },
+  { name: "gemma3:9b",       family: "Gemma",     desc: "Google's mid-size, strong at instruction following",       params: "9B",    size_gb: 6.4,  vram_required_gb: 7,  ram_required_gb: 14 },
+  { name: "gemma3:27b",      family: "Gemma",     desc: "Google's large model, excellent quality",                  params: "27B",   size_gb: 17.0, vram_required_gb: 18, ram_required_gb: 36 },
+  { name: "phi4:14b",        family: "Phi",       desc: "Microsoft's efficient reasoning model",                    params: "14B",   size_gb: 8.9,  vram_required_gb: 10, ram_required_gb: 20 },
+  { name: "phi4-mini:3.8b",  family: "Phi",       desc: "Compact Phi, great for low-end hardware",                  params: "3.8B",  size_gb: 2.5,  vram_required_gb: 3,  ram_required_gb: 7  },
+  { name: "deepseek-r1:7b",  family: "DeepSeek",  desc: "Chinese frontier model, strong at math/code",              params: "7B",    size_gb: 4.7,  vram_required_gb: 6,  ram_required_gb: 12 },
+  { name: "deepseek-r1:14b", family: "DeepSeek",  desc: "Larger DeepSeek with chain-of-thought",                    params: "14B",   size_gb: 9.0,  vram_required_gb: 10, ram_required_gb: 20 },
+  { name: "codellama:7b",    family: "Code",      desc: "Meta's code-specialized model",                            params: "7B",    size_gb: 3.8,  vram_required_gb: 5,  ram_required_gb: 10 },
+  { name: "codellama:13b",   family: "Code",      desc: "Larger code model, better completions",                    params: "13B",   size_gb: 7.4,  vram_required_gb: 9,  ram_required_gb: 18 },
+];
+
+export const FAMILY_COLORS = {
+  Qwen:      { bg: 'rgba(124,106,255,0.12)', color: '#a78bff', border: 'rgba(124,106,255,0.3)' },
+  Llama:     { bg: 'rgba(245,158,11,0.12)',  color: '#fbbf24', border: 'rgba(245,158,11,0.3)'  },
+  Mistral:   { bg: 'rgba(99,179,237,0.12)',  color: '#63b3ed', border: 'rgba(99,179,237,0.3)'  },
+  Gemma:     { bg: 'rgba(52,211,153,0.12)',  color: '#34d399', border: 'rgba(52,211,153,0.3)'  },
+  Phi:       { bg: 'rgba(244,114,182,0.12)', color: '#f472b6', border: 'rgba(244,114,182,0.3)' },
+  DeepSeek:  { bg: 'rgba(248,113,113,0.12)', color: '#f87171', border: 'rgba(248,113,113,0.3)' },
+  Code:      { bg: 'rgba(6,182,212,0.12)',   color: '#22d3ee', border: 'rgba(6,182,212,0.3)'   },
+};

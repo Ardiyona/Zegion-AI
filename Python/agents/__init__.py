@@ -32,6 +32,16 @@ from agents.memory import (
     compress_memory,
 )
 
+from agents.cancel import (
+    request_cancel,
+    is_cancelled,
+    clear_cancel,
+    mark_cancelled,
+    pop_was_cancelled,
+    register_stream,
+    unregister_stream,
+)
+
 from agents.task_queue import (
     create_task,
     complete_task,

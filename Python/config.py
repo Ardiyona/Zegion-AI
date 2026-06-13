@@ -56,6 +56,15 @@ COMPRESS_THRESHOLD = int(os.getenv("COMPRESS_THRESHOLD", "50"))
 KEEP_RECENT_MESSAGES = int(os.getenv("KEEP_RECENT_MESSAGES", "20"))
 
 # =========================
+# SEARCH PROVIDERS
+# =========================
+
+SEARCH_PROVIDERS = os.getenv("SEARCH_PROVIDERS", "duckduckgo,brave,bing")
+SEARCH_FALLBACK = os.getenv("SEARCH_FALLBACK", "true").lower() == "true"
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+# =========================
 # CLICKUP API (bisa diubah via .env)
 # =========================
 

@@ -53,6 +53,8 @@ export function Sidebar({
   onDeleteConv,
   agentName = 'Zegion',
   agentVersion = '1.0',
+  view = 'chat',
+  onViewChange,
 }) {
   const statusConfig = {
     ready: { dot: '', label: 'Connected' },
@@ -126,6 +128,31 @@ export function Sidebar({
           </div>
         )}
       </div>
+
+      {/* Models nav item */}
+      <button
+        onClick={() => onViewChange && onViewChange(view === 'models' ? 'chat' : 'models')}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '10px 12px',
+          borderRadius: 'var(--radius-md)',
+          background: view === 'models' ? 'var(--accent-dim)' : 'transparent',
+          border: view === 'models' ? '1px solid rgba(124,106,255,0.2)' : '1px solid transparent',
+          color: view === 'models' ? 'var(--accent-hover)' : 'var(--text-secondary)',
+          fontSize: '13px',
+          fontWeight: 500,
+          cursor: 'pointer',
+          transition: 'all var(--transition)',
+          fontFamily: 'inherit',
+          width: '100%',
+          textAlign: 'left',
+        }}
+      >
+        <span style={{ fontSize: '14px' }}>⬡</span>
+        Models
+      </button>
 
       {/* Status */}
       <div className="sidebar-status">

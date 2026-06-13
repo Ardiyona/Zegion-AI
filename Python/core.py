@@ -4,8 +4,11 @@ Pipeline logic yang bisa dipanggil dari terminal (main.py) maupun API (api.py).
 Storage: SQLite via db.py
 """
 
+import logging
 import os
-from ollama import chat
+from typing import Optional
+
+from agents.executor import _stream_chat, _CancelledError
 
 from config import (
     AGENT_NAME,
@@ -43,6 +46,11 @@ from agents import (
     get_remaining_steps,
     format_pending_tasks,
     cleanup_completed,
+    request_cancel,
+    is_cancelled,
+    clear_cancel,
+    pop_was_cancelled,
+
 )
 
 from db import (
@@ -62,29 +70,28 @@ from db import (
     is_conversation_worth_summarizing,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # =========================
 # STARTUP
 # =========================
 
-def initialize():
+def initialize() -> str:
     """
     Inisialisasi Zegion: init DB, migrate data lama, build index & embeddings.
     Return: project_index (str)
     """
     print(f"\n{AGENT_NAME} v{AGENT_VERSION} memulai...\n")
 
-    # Init SQLite DB (termasuk tabel knowledge_base)
     init_db()
     print("[DB] Database ready.")
 
-    # Migrasi data JSON lama jika ada
     if os.path.exists(MEMORY_FILE):
         migrated = migrate_from_json(MEMORY_FILE)
         if migrated:
             print("[DB] Migrasi memory.json selesai.")
 
-    # Build project index & embeddings
     print("Membangun project index...")
     project_index = build_project_index(".")
     print("Project index siap!")
@@ -96,8 +103,7 @@ def initialize():
     return project_index
 
 
-# Public alias untuk startup ringan di api.py (tanpa Ollama)
-def quick_init():
+def quick_init() -> None:
     """Startup cepat: hanya init DB (termasuk KB table) dan migrasi."""
     init_db()
     if os.path.exists(MEMORY_FILE):
@@ -108,15 +114,12 @@ def quick_init():
 # OLLAMA HISTORY BUILDER
 # =========================
 
-def _build_ollama_history(conv_id, limit=20):
+def _build_ollama_history(conv_id: str, limit: int = 20) -> list[dict]:
     """
     Ambil pesan terakhir dari DB dan format untuk Ollama.
     Inject: system prompt + long-term knowledge + recent messages.
     """
-    # Ambil long-term knowledge context
     kb_context = kb_get_context(max_entries=8)
-
-    # System prompt + optional KB
     system_content = SYSTEM_PROMPT
     if kb_context:
         system_content = f"{SYSTEM_PROMPT}\n\n{kb_context}"
@@ -131,27 +134,43 @@ def _build_ollama_history(conv_id, limit=20):
 # PIPELINE MODES
 # =========================
 
-def run_chat(user_input, conv_id):
+def run_chat(user_input: str, conv_id: str, model: str = DEFAULT_MODEL) -> Optional[str]:
     """
     Chat Mode: Langsung ke model, tanpa Planner/Executor.
+
+    Returns None if cancelled, otherwise the response string.
     """
     chat_messages = _build_ollama_history(conv_id, limit=20)
     chat_messages.append({"role": "user", "content": user_input})
 
-    response = chat(model=DEFAULT_MODEL, messages=chat_messages)
-    return response["message"]["content"]
+    try:
+        return _stream_chat(model=model, messages=chat_messages, conv_id=conv_id)
+    except _CancelledError:
+        return None
+    except Exception as e:
+        logger.error("[run_chat] error: %s", e)
+        return f"Error: {e}"
 
 
-def run_quick(user_request, plan, task_id, project_index=""):
-    """
-    Quick Mode: Planner → Executor → Responder.
-    """
-    results, exec_response = execute_plan(plan, task_id=task_id)
+def run_quick(
+    user_request: str,
+    plan: list[dict],
+    task_id: str,
+    project_index: str = "",
+    conv_id: Optional[str] = None,
+) -> str:
+    """Quick Mode: Planner → Executor → Responder."""
+    results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id)
+
+    if pop_was_cancelled(conv_id):
+        return ""
 
     has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
     if has_tools:
-        final_response = generate_response(user_request, results)
+        final_response = generate_response(user_request, results, conv_id=conv_id)
+        if pop_was_cancelled(conv_id):
+            return ""
     elif exec_response:
         final_response = exec_response
     else:
@@ -161,18 +180,26 @@ def run_quick(user_request, plan, task_id, project_index=""):
     return final_response
 
 
-def run_deep(user_request, plan, task_id, project_index=""):
-    """
-    Deep Mode: Planner → Executor → Critic → Reflection → Responder.
-    """
-    results = []
+def run_deep(
+    user_request: str,
+    plan: list[dict],
+    task_id: str,
+    project_index: str = "",
+    conv_id: Optional[str] = None,
+) -> str:
+    """Deep Mode: Planner → Executor → Critic → Reflection → Responder."""
+    results: list[dict] = []
     exec_response = ""
 
     for attempt in range(MAX_CRITIC_RETRIES + 1):
         if attempt > 0:
             print(f"\nCritic retry {attempt}/{MAX_CRITIC_RETRIES}...")
 
-        results, exec_response = execute_plan(plan, task_id=task_id)
+        results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id)
+
+        if pop_was_cancelled(conv_id):
+            return ""
+
         passed, critic_feedback = critique(user_request, results, exec_response)
 
         if passed:
@@ -198,12 +225,16 @@ def run_deep(user_request, plan, task_id, project_index=""):
             improve_prompt = f"{user_request}\n\n[REFLECTION]: {suggestions}"
             new_plan, _ = create_plan(improve_prompt, project_index)
             if new_plan:
-                results, exec_response = execute_plan(new_plan, task_id=task_id)
+                results, exec_response = execute_plan(new_plan, task_id=task_id, conv_id=conv_id)
+                if pop_was_cancelled(conv_id):
+                    return ""
 
     has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
     if has_tools:
-        final_response = generate_response(user_request, results)
+        final_response = generate_response(user_request, results, conv_id=conv_id)
+        if pop_was_cancelled(conv_id):
+            return ""
     elif exec_response:
         final_response = exec_response
     else:
@@ -225,18 +256,19 @@ def run_deep(user_request, plan, task_id, project_index=""):
 # MAIN HANDLER
 # =========================
 
-def handle_message(user_input, conv_id, project_index=""):
+def handle_message(
+    user_input: str,
+    conv_id: str,
+    project_index: str = "",
+    model: str = DEFAULT_MODEL,
+) -> tuple[Optional[str], str, str, list]:
     """
     Handle 1 pesan user — routing ke mode yang tepat.
     Simpan user + assistant message ke DB.
 
-    Return:
-        response   (str)
-        conv_id    (str)   — sama atau baru jika conv_id kosong
-        mode       (str)
-        plan       (list)
+    Returns: (response, conv_id, mode, plan)
+    response is None when cancelled — caller must NOT send a response to client.
     """
-    # Buat conversation baru jika belum ada
     if not conv_id or not get_conversation(conv_id):
         conv = create_conversation()
         conv_id = conv["id"]
@@ -266,13 +298,10 @@ def handle_message(user_input, conv_id, project_index=""):
     forced_mode, clean_input = parse_override(user_input)
     auto_mode = detect_mode(clean_input)
     mode = forced_mode if forced_mode else auto_mode
+    plan: list = []
 
-    plan = []
-
-    # Simpan pesan user ke DB
     add_message(conv_id, "user", clean_input)
 
-    # Auto-set title dari pesan pertama user
     conv = get_conversation(conv_id)
     if conv and conv["title"] == "New Chat":
         title = generate_title_from_message(clean_input)
@@ -280,9 +309,11 @@ def handle_message(user_input, conv_id, project_index=""):
 
     # ── CHAT MODE ─────────────────────────────────────
     if mode == MODE_CHAT:
-        # Hapus pesan user yang baru saja ditambah dari history
-        # agar tidak double — run_chat akan query ulang dari DB
-        final_response = run_chat(clean_input, conv_id)
+        clear_cancel(conv_id)
+        final_response = run_chat(clean_input, conv_id, model=model)
+        if final_response is None or pop_was_cancelled(conv_id) or is_cancelled(conv_id):
+            clear_cancel(conv_id)
+            return None, conv_id, mode, plan
         add_message(conv_id, "assistant", final_response, mode="Chat", mode_key="chat")
         return final_response, conv_id, mode, plan
 
@@ -297,12 +328,18 @@ def handle_message(user_input, conv_id, project_index=""):
     task = create_task(clean_input, plan)
     task_id = task["id"]
 
-    if mode == MODE_DEEP:
-        final_response = run_deep(clean_input, plan, task_id, project_index)
-    else:
-        final_response = run_quick(clean_input, plan, task_id, project_index)
+    clear_cancel(conv_id)
 
-    # Simpan response ke DB dengan metadata mode & plan
+    if mode == MODE_DEEP:
+        final_response = run_deep(clean_input, plan, task_id, project_index, conv_id=conv_id)
+    else:
+        final_response = run_quick(clean_input, plan, task_id, project_index, conv_id=conv_id)
+
+    # Cancelled — jangan simpan ke DB
+    if pop_was_cancelled(conv_id) or is_cancelled(conv_id) or not final_response:
+        clear_cancel(conv_id)
+        return None, conv_id, mode, plan
+
     mode_name = mode_label(mode)
     add_message(
         conv_id, "assistant", final_response,
@@ -317,19 +354,12 @@ def handle_message(user_input, conv_id, project_index=""):
 # SMART DELETE
 # =========================
 
-def smart_delete_conversation(conv_id):
+def smart_delete_conversation(conv_id: str) -> dict:
     """
     Hapus conversation dengan safety check:
     1. Cek apakah conversation penting (rule-based, cepat)
     2. Jika penting → AI summarize → simpan ke knowledge base
     3. Hapus conversation dari DB
-
-    Return: {
-        "deleted": bool,
-        "summarized": bool,
-        "kb_entry": dict or None,
-        "reason": str
-    }
     """
     from db import get_messages as _get_messages
 
@@ -339,10 +369,9 @@ def smart_delete_conversation(conv_id):
                 "reason": "Conversation tidak ditemukan"}
 
     worth_summarizing = is_conversation_worth_summarizing(conv_id)
-
     kb_entry = None
+
     if worth_summarizing:
-        # Ambil semua pesan untuk di-summarize
         messages = _get_messages(conv_id)
         conversation_text = "\n".join(
             f"[{m['role'].upper()}]: {m['content'][:400]}"
@@ -350,35 +379,31 @@ def smart_delete_conversation(conv_id):
             if m["role"] in ("user", "assistant")
         )
 
-        # Determine importance berdasarkan mode yang dipakai
         has_deep = any(m.get("mode_key") == "deep" for m in messages)
         importance = "high" if has_deep else "medium"
 
-        # AI generate summary
         try:
-            summary_response = chat(
+            summary = _stream_chat(
                 model=DEFAULT_MODEL,
                 messages=[{
                     "role": "user",
-                    "content": f"""Buat ringkasan singkat dari percakapan ini. 
-Fokus pada:
-1. Apa yang dikerjakan/diputuskan
-2. File atau konfigurasi yang berubah
-3. Konteks penting yang perlu diingat ke depan
-
-Format: bullet points singkat, maksimal 5 poin.
-Jawab langsung dalam bahasa Indonesia.
-
-Percakapan:
-{conversation_text[:4000]}"""
-                }]
+                    "content": (
+                        "Buat ringkasan singkat dari percakapan ini.\n"
+                        "Fokus pada:\n"
+                        "1. Apa yang dikerjakan/diputuskan\n"
+                        "2. File atau konfigurasi yang berubah\n"
+                        "3. Konteks penting yang perlu diingat ke depan\n\n"
+                        "Format: bullet points singkat, maksimal 5 poin.\n"
+                        "Jawab langsung dalam bahasa Indonesia.\n\n"
+                        f"Percakapan:\n{conversation_text[:4000]}"
+                    )
+                }],
+                conv_id=None,  # summarize tidak boleh di-cancel
             )
-            summary = summary_response["message"]["content"].strip()
         except Exception as e:
             summary = f"[Gagal generate summary: {e}]"
             importance = "low"
 
-        # Simpan ke knowledge base
         kb_entry = kb_add(
             content=summary,
             source_conv_id=conv_id,
@@ -387,7 +412,6 @@ Percakapan:
         )
         print(f"[KB] Saved summary from '{conv.get('title')}' (importance: {importance})")
 
-    # Hapus conversation (CASCADE hapus messages juga)
     delete_conversation(conv_id)
 
     return {

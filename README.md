@@ -64,14 +64,17 @@ git clone https://github.com/Ardiyona/Zegion-AI.git
 cd Zegion-AI/Python
 ```
 
-### 2. Install Ollama & model
+### 2. Install Ollama
 
-```bash
-# Install Ollama dari https://ollama.com/download
-# Lalu download model:
-ollama pull qwen3:4b
-ollama pull nomic-embed-text
-```
+Download dan install Ollama dari **https://ollama.com/download**, lalu pastikan Ollama sudah berjalan di background.
+
+> **Model tidak perlu di-pull manual.** Buka Zegion → klik **Models** di sidebar → download model langsung dari UI.
+>
+> Jika ingin langsung pakai via terminal (opsional):
+> ```bash
+> ollama pull qwen3:4b
+> ollama pull nomic-embed-text
+> ```
 
 ### 3. Install dependencies Python
 

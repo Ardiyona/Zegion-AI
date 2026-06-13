@@ -27,6 +27,12 @@ QUICK_KEYWORDS = [
     r"baca\s+file", r"lihat\s+file", r"tampilkan",
     r"jalankan", r"execute", r"run\s+",
     r"cari\s+file", r"search", r"list\s+file",
+    # Web search triggers
+    r"cari\s+di\s+internet", r"googling", r"search\s+internet",
+    r"harga\s+\w+", r"berita\s+", r"apa\s+itu\s+error",
+    r"solusi\s+error", r"cara\s+install", r"download\s+",
+    r"rilis\s+terbaru", r"versi\s+terbaru", r"update\s+terbaru",
+    r"fetch\s+url", r"buka\s+url", r"baca\s+website",
     r"edit\s+", r"ubah\s+", r"ganti\s+",
     # ClickUp
     r"clickup", r"lihat\s+task", r"buat\s+task", r"update\s+task",
