@@ -12,6 +12,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.router import mode_label
+from agents.cancel import request_cancel, is_cancelled, clear_cancel
 from config import AGENT_NAME, AGENT_VERSION
 from core import handle_message, quick_init, smart_delete_conversation
 from db import (
@@ -173,6 +174,17 @@ async def delete_kb_entry(entry_id: int):
 
 
 # =========================
+# STOP ENDPOINT
+# =========================
+
+@app.post("/stop/{conv_id}")
+async def stop_execution(conv_id: str):
+    """Batalkan eksekusi yang sedang berjalan untuk conversation ini."""
+    request_cancel(conv_id)
+    return {"stopped": True, "conv_id": conv_id}
+
+
+# =========================
 # WEBSOCKET CHAT
 # =========================
 
@@ -219,6 +231,14 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
             except Exception as e:
                 print(f"[WS] Error: {e}")
                 await websocket.send_json({"type": "error", "text": str(e)})
+                continue
+
+            # Dibatalkan user — kirim tipe khusus, jangan simpan / tampilkan response
+            # is_cancelled() catches race: cancel arrived after generation completed
+            if response is None or is_cancelled(conv_id):
+                clear_cancel(conv_id)
+                await websocket.send_json({"type": "cancelled"})
+                print(f"[WS] [{conv_id[:8]}] Cancelled by user")
                 continue
 
             await websocket.send_json({

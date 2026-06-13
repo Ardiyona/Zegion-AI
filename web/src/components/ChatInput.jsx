@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 
-export function ChatInput({ onSend, disabled }) {
+export function ChatInput({ onSend, onStop, isThinking, disabled }) {
   const [text, setText] = useState('');
   const textareaRef = useRef(null);
 
@@ -40,15 +40,26 @@ export function ChatInput({ onSend, disabled }) {
           disabled={disabled}
           rows={1}
         />
-        <button
-          id="send-button"
-          className="send-button"
-          onClick={handleSend}
-          disabled={!text.trim() || disabled}
-          title="Kirim pesan"
-        >
-          ↑
-        </button>
+        {isThinking ? (
+          <button
+            id="stop-button"
+            className="stop-button"
+            onClick={onStop}
+            title="Hentikan eksekusi"
+          >
+            ⏹
+          </button>
+        ) : (
+          <button
+            id="send-button"
+            className="send-button"
+            onClick={handleSend}
+            disabled={!text.trim() || disabled}
+            title="Kirim pesan"
+          >
+            ↑
+          </button>
+        )}
       </div>
       <p className="input-hint">
         /chat · /quick · /deep &nbsp;·&nbsp; Shift+Enter untuk baris baru

@@ -1,5 +1,8 @@
+import logging
 import re
-from ollama import chat
+from typing import Optional
+from ollama import chat as _ollama_chat
+
 from tools.file_ops import (
     read_file,
     write_file,
@@ -30,6 +33,8 @@ from tools.clickup import (
     clickup_smart_update_task,
     clickup_smart_add_comment,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -83,13 +88,88 @@ ATURAN:
 
 
 # =========================
+# STREAMING CHAT HELPER
+# =========================
+
+class _CancelledError(Exception):
+    """Raised when streaming is interrupted by user cancel."""
+    pass
+
+
+def _stream_chat(
+    model: str,
+    messages: list[dict],
+    conv_id: Optional[str] = None,
+) -> str:
+    """
+    Streaming wrapper around ollama.chat().
+
+    - Registers the stream so request_cancel() can close it from another thread.
+    - Checks is_cancelled() on every token — breaks immediately if set.
+    - Calls unregister_stream() in finally on ALL exit paths.
+    - Never passes a partial buffer to caller on cancel or error.
+
+    Returns:
+        Full accumulated response string on success.
+
+    Raises:
+        _CancelledError: if cancelled mid-stream (or before stream starts).
+        Exception: re-raises network/generation errors after cleanup.
+    """
+    from agents.cancel import (
+        is_cancelled, mark_cancelled, register_stream, unregister_stream,
+    )
+
+    # Check before even opening stream
+    if is_cancelled(conv_id):
+        mark_cancelled(conv_id)
+        raise _CancelledError()
+
+    stream = _ollama_chat(model=model, messages=messages, stream=True)
+    register_stream(conv_id, stream)
+
+    buffer = ""
+    cancelled = False
+    error: Optional[Exception] = None
+
+    try:
+        for chunk in stream:
+            if is_cancelled(conv_id):
+                cancelled = True
+                break
+            try:
+                buffer += chunk.get("message", {}).get("content", "")
+            except Exception as e:
+                logger.warning("[executor] chunk parse error: %s", e)
+    except Exception as e:
+        # Network drop or generation error — not a cancel
+        logger.warning("[executor] stream error: %s", e)
+        error = e
+    finally:
+        unregister_stream(conv_id)
+
+    if cancelled:
+        mark_cancelled(conv_id)
+        raise _CancelledError()
+
+    if error is not None:
+        raise error
+
+    return buffer
+
+
+# =========================
 # TOOL HANDLERS
 # =========================
 
-def _handle_tools(ai_response):
+def _handle_tools(
+    ai_response: str,
+) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
-    Parse response AI dan jalankan tool jika ada.
-    Return: (tool_used, tool_name, tool_target, result)
+    Parse full (non-partial) AI response and execute the matching tool.
+
+    Must only be called after _stream_chat() completes without cancel/error.
+    Returns: (tool_used, tool_name, tool_target, result)
     """
 
     # READ FILE
@@ -155,10 +235,6 @@ def _handle_tools(ai_response):
         result = write_file(path, content)
         return True, "WRITE_FILE", path, result
 
-    # =========================
-    # WEB TOOLS
-    # =========================
-
     # WEB SEARCH
     m = re.search(r'\[WEB_SEARCH query="(.*?)"\]', ai_response)
     if m:
@@ -173,11 +249,7 @@ def _handle_tools(ai_response):
         result = fetch_url(url)
         return True, "FETCH_URL", url, result
 
-    # =========================
-    # CLICKUP HIGH-LEVEL TOOLS
-    # =========================
-
-    # CLICKUP GET TASKS (high-level — auto-resolve)
+    # CLICKUP GET TASKS
     m = re.search(r'\[CLICKUP_GET_TASKS(?:\s+list_name="(.*?)")?(?:\s+status="(.*?)")?\]', ai_response)
     if m:
         list_name = m.group(1)
@@ -186,44 +258,36 @@ def _handle_tools(ai_response):
         label = list_name or status or "all"
         return True, "CLICKUP_GET_TASKS", label, result
 
-    # CLICKUP GET TASK DETAIL (high-level)
+    # CLICKUP GET TASK DETAIL
     m = re.search(r'\[CLICKUP_GET_TASK_DETAIL task_id="(.*?)"\]', ai_response)
     if m:
         task_id = m.group(1)
         result = clickup_get_task_detail(task_id)
         return True, "CLICKUP_GET_TASK_DETAIL", task_id, result
 
-    # CLICKUP CREATE TASK (high-level — by list name)
+    # CLICKUP CREATE TASK
     m = re.search(r'\[CLICKUP_CREATE_TASK list_name="(.*?)" name="(.*?)"(?:\s+description="(.*?)")?(?:\s+priority="(.*?)")?\]', ai_response)
     if m:
-        list_name = m.group(1)
-        name = m.group(2)
+        list_name, name = m.group(1), m.group(2)
         desc = m.group(3) or ""
         priority = m.group(4)
         result = clickup_smart_create_task(name, list_name, desc, priority=priority)
         return True, "CLICKUP_CREATE_TASK", name, result
 
-    # CLICKUP UPDATE TASK (high-level)
+    # CLICKUP UPDATE TASK
     m = re.search(r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?\]', ai_response)
     if m:
         task_id = m.group(1)
-        status = m.group(2)
-        priority = m.group(3)
-        name = m.group(4)
+        status, priority, name = m.group(2), m.group(3), m.group(4)
         result = clickup_smart_update_task(task_id, status=status, priority=priority, name=name)
         return True, "CLICKUP_UPDATE_TASK", task_id, result
 
-    # CLICKUP ADD COMMENT (high-level)
+    # CLICKUP ADD COMMENT
     m = re.search(r'\[CLICKUP_ADD_COMMENT task_id="(.*?)" comment="(.*?)"\]', ai_response, re.DOTALL)
     if m:
-        task_id = m.group(1)
-        comment = m.group(2)
+        task_id, comment = m.group(1), m.group(2)
         result = clickup_smart_add_comment(task_id, comment)
         return True, "CLICKUP_ADD_COMMENT", task_id, result
-
-    # =========================
-    # CLICKUP LOW-LEVEL TOOLS (navigasi)
-    # =========================
 
     # CLICKUP LIST SPACES
     if '[CLICKUP_LIST_SPACES]' in ai_response:
@@ -237,7 +301,7 @@ def _handle_tools(ai_response):
         result = clickup_list_lists(space_id)
         return True, "CLICKUP_LIST_LISTS", space_id, result
 
-    # CLICKUP LIST TASKS (low-level by ID)
+    # CLICKUP LIST TASKS (low-level)
     m = re.search(r'\[CLICKUP_LIST_TASKS list_id="(.*?)"\]', ai_response)
     if m:
         list_id = m.group(1)
@@ -251,74 +315,77 @@ def _handle_tools(ai_response):
 # EXECUTOR AGENT
 # =========================
 
-def execute_plan(plan, task_id=None):
+def execute_plan(
+    plan: list[dict],
+    task_id: Optional[str] = None,
+    conv_id: Optional[str] = None,
+) -> tuple[list[dict], str]:
     """
     Executor AI Agent — mengerjakan plan dengan kemampuan berpikir.
-    Bisa adaptasi, retry error, dan ambil keputusan sendiri.
+
+    Returns: (results, final_response)
+    final_response is "" when cancelled — caller must check pop_was_cancelled().
     """
     from agents.task_queue import update_task_step
 
-    # Format plan sebagai instruksi
     plan_text = "\n".join(
         f"{t.get('step', i+1)}. {t.get('action', '?')}: {t.get('reason', '')} "
         f"(params: {t.get('params', {})})"
         for i, t in enumerate(plan)
     )
 
-    # Cek apakah ini plan sederhana (RESPOND saja)
+    # Fast path: plan is just a single RESPOND — no streaming needed
     if len(plan) == 1 and plan[0].get("action", "").upper() == "RESPOND":
         msg = plan[0].get("params", {}).get("message", "")
         return [{"step": 1, "action": "RESPOND", "result": msg}], msg
 
-    # Build executor messages
-    exec_messages = [
+    exec_messages: list[dict] = [
         {"role": "system", "content": EXECUTOR_PROMPT},
         {"role": "user", "content": f"Rencana yang harus dikerjakan:\n{plan_text}\n\nMulai kerjakan dari langkah pertama."}
     ]
 
-    results = []
+    results: list[dict] = []
     final_response = ""
 
     for step in range(MAX_EXECUTOR_STEPS):
 
-        # Call AI
-        response = chat(model=EXECUTOR_MODEL, messages=exec_messages)
-        ai = response["message"]["content"]
-
         print(f"\n  🤖 Executor (step {step + 1}):")
 
-        # Cek apakah sudah selesai
+        try:
+            ai = _stream_chat(model=EXECUTOR_MODEL, messages=exec_messages, conv_id=conv_id)
+        except _CancelledError:
+            print(f"    ⛔ Dibatalkan user (step {step + 1})")
+            # final_response tetap "" — caller pakai pop_was_cancelled() untuk deteksi
+            break
+        except Exception as e:
+            print(f"    ❌ Stream error: {e}")
+            final_response = f"Error: {e}"
+            break
+
+        # Tool parsing hanya setelah stream SELESAI penuh — tidak pada partial buffer
         if "[DONE]" in ai:
             done_idx = ai.index("[DONE]")
             final_response = ai[done_idx + 6:].strip()
             print(f"    ✅ DONE: {final_response[:150]}...")
-
             if task_id:
                 update_task_step(task_id, step, {
-                    "step": step + 1,
-                    "action": "DONE",
-                    "result": final_response
+                    "step": step + 1, "action": "DONE", "result": final_response,
                 })
             break
 
-        # Coba handle tools
         tool_used, tool_name, tool_target, tool_result = _handle_tools(ai)
 
         if tool_used:
             print(f"    🔧 [{tool_name}] → {tool_target}")
-            preview = str(tool_result)[:150]
-            print(f"    📄 {preview}...")
-
+            print(f"    📄 {str(tool_result)[:150]}...")
             results.append({
                 "step": step + 1,
                 "action": tool_name,
                 "target": tool_target,
-                "result": tool_result
+                "result": tool_result,
             })
-
             if task_id:
                 update_task_step(task_id, step, results[-1])
-
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": tool_result})
         else:
@@ -333,10 +400,13 @@ def execute_plan(plan, task_id=None):
 # RESPONDER
 # =========================
 
-def generate_response(user_message, results):
+def generate_response(
+    user_message: str,
+    results: list[dict],
+    conv_id: Optional[str] = None,
+) -> str:
     """
-    Phase 4: Responder.
-    Generate jawaban final berdasarkan hasil eksekusi yang SEBENARNYA.
+    Phase 4: Responder — generate final answer from execution results.
     """
     if not results:
         return "Semua langkah selesai."
@@ -344,18 +414,14 @@ def generate_response(user_message, results):
     if len(results) == 1 and results[0].get("action") == "RESPOND":
         return results[0]["result"]
 
-    # Format hasil eksekusi untuk konteks
     context_parts = []
     for r in results:
         action = r.get("action", "?")
-        result = str(r.get("result", ""))
-
         if action in ("RESPOND", "DONE"):
             continue
-
+        result = str(r.get("result", ""))
         if len(result) > 2000:
             result = result[:2000] + "\n... (terpotong)"
-
         target = r.get("target", "")
         context_parts.append(f"[{action}({target})]:\n{result}")
 
@@ -363,21 +429,27 @@ def generate_response(user_message, results):
         return results[-1].get("result", "Selesai.")
 
     context = "\n\n".join(context_parts)
-
     print("\n  🤖 Responder generating answer...")
 
-    response = chat(
-        model=RESPONDER_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": "Kamu adalah AI assistant. Berdasarkan hasil tool yang sudah dijalankan, jawab pertanyaan user secara lengkap dan jelas. Jawab dalam bahasa Indonesia."
-            },
-            {
-                "role": "user",
-                "content": f"Pertanyaan user: {user_message}\n\nHasil eksekusi:\n{context}\n\nBerikan jawaban lengkap berdasarkan hasil di atas."
-            }
-        ]
-    )
+    try:
+        ai = _stream_chat(
+            model=RESPONDER_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Kamu adalah AI assistant. Berdasarkan hasil tool yang sudah dijalankan, jawab pertanyaan user secara lengkap dan jelas. Jawab dalam bahasa Indonesia."
+                },
+                {
+                    "role": "user",
+                    "content": f"Pertanyaan user: {user_message}\n\nHasil eksekusi:\n{context}\n\nBerikan jawaban lengkap berdasarkan hasil di atas."
+                }
+            ],
+            conv_id=conv_id,
+        )
+    except _CancelledError:
+        return ""
+    except Exception as e:
+        logger.error("[responder] stream error: %s", e)
+        return f"Error saat generate response: {e}"
 
-    return response["message"]["content"]
+    return ai

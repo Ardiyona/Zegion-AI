@@ -677,6 +677,28 @@ body {
   cursor: not-allowed;
 }
 
+.stop-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e53e3e;
+  border: none;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition);
+  font-size: 13px;
+}
+
+.stop-button:hover {
+  background: #c53030;
+  box-shadow: 0 0 16px rgba(229, 62, 62, 0.5);
+  transform: scale(1.05);
+}
+
 .input-hint {
   font-size: 11px;
   color: var(--text-muted);

@@ -14,6 +14,7 @@ export default function App() {
     isThinking,
     wsStatus,
     sendMessage,
+    stopExecution,
     newConversation,
     switchConversation,
     deleteConversation,
@@ -67,6 +68,8 @@ export default function App() {
         {/* Input */}
         <ChatInput
           onSend={sendMessage}
+          onStop={stopExecution}
+          isThinking={isThinking}
           disabled={isThinking || wsStatus !== 'ready'}
         />
       </main>

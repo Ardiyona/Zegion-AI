@@ -14,6 +14,9 @@ export function useChat() {
   const activeConvIdRef = useRef(null); // ref agar closure WS bisa baca nilai terbaru
   const pollTimerRef = useRef(null);
   const isThinkingRef = useRef(false);
+  // Tracks conv IDs where stop was clicked but terminal WS event hasn't arrived yet.
+  // Keyed by conv ID so a fast second message doesn't prematurely clear the guard.
+  const cancelledConvsRef = useRef(new Set());
 
   // Sinkronkan ref dengan state
   useEffect(() => { activeConvIdRef.current = activeConvId; }, [activeConvId]);
@@ -30,14 +33,13 @@ export function useChat() {
     }
   }, []);
 
-  // ── Fetch messages (return messages untuk dicek) ───
+  // ── Fetch messages — pure fetch, no setMessages side effect ───
+  // Callers must decide whether / how to update state.
   const fetchMessages = useCallback(async (convId) => {
     try {
       const res = await fetch(`${API_BASE}/conversations/${convId}/messages`);
       const data = await res.json();
-      const msgs = data.messages || [];
-      setMessages(msgs);
-      return msgs;
+      return data.messages || [];
     } catch (e) {
       console.error('[API] fetchMessages failed:', e);
       return [];
@@ -52,7 +54,9 @@ export function useChat() {
     }
   }, []);
 
-  // ── Start polling untuk conversation dengan pesan pending ──
+  // ── Start polling (WS disconnect fallback) ─────────
+  // Polling only DETECTS when a response is ready — it never unconditionally
+  // replaces messages state. setMessages is called only if WS missed the response.
   const startPolling = useCallback((convId) => {
     stopPolling();
 
@@ -67,10 +71,16 @@ export function useChat() {
       const lastMsg = msgs[msgs.length - 1];
 
       // Jika sudah ada response dari assistant → stop poll
-      if (lastMsg && lastMsg.role === 'assistant') {
+      if (lastMsg?.role === 'assistant') {
         stopPolling();
         setIsThinking(false);
         fetchConversations(); // Refresh title di sidebar
+        // Sync from DB only if WS didn't already append the assistant message.
+        // Prevents duplicate: WS appended → state ends with assistant → skip.
+        setMessages((prev) => {
+          const lastPrev = prev[prev.length - 1];
+          return lastPrev?.role === 'assistant' ? prev : msgs;
+        });
       }
     }, POLL_INTERVAL);
   }, [stopPolling, fetchMessages, fetchConversations]);
@@ -100,6 +110,7 @@ export function useChat() {
       // Refresh messages saat WS connect — tangkap response yang tersimpan
       // saat WS sebelumnya terputus
       const msgs = await fetchMessages(convId);
+      setMessages(msgs);
 
       if (hasPendingMessage(msgs)) {
         // Response belum ada → mulai polling
@@ -117,6 +128,32 @@ export function useChat() {
 
         if (data.type === 'thinking') {
           setIsThinking(true);
+          return;
+        }
+
+        // Guard against race condition: stop was clicked but response/cancelled
+        // arrived anyway (fast generation or network delay).
+        // Tracked per conv ID so a second message sent immediately after stop
+        // doesn't prematurely clear the guard — the guard clears only when the
+        // terminal WS event for the CANCELLED request arrives.
+        const currentConvId = activeConvIdRef.current;
+        if (cancelledConvsRef.current.has(currentConvId)) {
+          if (data.type === 'response' || data.type === 'cancelled') {
+            // Terminal event for the cancelled request — safe to clear guard
+            cancelledConvsRef.current.delete(currentConvId);
+          }
+          // Discard in all cases; UI was already cleaned up in stopExecution()
+          return;
+        }
+
+        if (data.type === 'cancelled') {
+          setIsThinking(false);
+          stopPolling();
+          // Hapus pesan user terakhir (optimistic UI yang tidak jadi diproses)
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            return last?.role === 'user' ? prev.slice(0, -1) : prev;
+          });
           return;
         }
 
@@ -172,7 +209,8 @@ export function useChat() {
 
     // Fetch messages dulu sebelum connect WS
     // (onopen juga akan fetch lagi untuk tangkap response pending)
-    await fetchMessages(convId);
+    const msgs = await fetchMessages(convId);
+    setMessages(msgs);
     connectWs(convId);
   }, [fetchMessages, connectWs, stopPolling]);
 
@@ -207,6 +245,28 @@ export function useChat() {
       console.error('[API] deleteConversation failed:', e);
     }
   }, [conversations, switchConversation, newConversation]);
+
+  // ── Stop execution ────────────────────────────────
+  const stopExecution = useCallback(async () => {
+    const convId = activeConvIdRef.current;
+    if (!convId) return;
+    // Mark conv ID as cancelled BEFORE the POST — onmessage will discard any
+    // response that arrives, even if user sends a new message before the WS
+    // delivers the terminal event for this cancelled request.
+    cancelledConvsRef.current.add(convId);
+    setIsThinking(false);
+    stopPolling();
+    // Remove the optimistic user bubble that won't get a response
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      return last?.role === 'user' ? prev.slice(0, -1) : prev;
+    });
+    try {
+      await fetch(`${API_BASE}/stop/${convId}`, { method: 'POST' });
+    } catch (e) {
+      console.error('[API] stopExecution failed:', e);
+    }
+  }, [stopPolling]);
 
   // ── Send message ───────────────────────────────────
   const sendMessage = useCallback((text) => {
@@ -249,6 +309,7 @@ export function useChat() {
     isThinking,
     wsStatus,
     sendMessage,
+    stopExecution,
     newConversation,
     switchConversation,
     deleteConversation,
