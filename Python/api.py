@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agents.router import mode_label
 from agents.cancel import request_cancel, is_cancelled, clear_cancel
-from config import AGENT_NAME, AGENT_VERSION
+from config import AGENT_NAME, AGENT_VERSION, DEFAULT_MODEL
 from core import handle_message, quick_init, smart_delete_conversation
 from db import (
     init_db,
@@ -35,6 +35,7 @@ from db import (
 _state = {
     "project_index": "",
     "ready": False,
+    "model": DEFAULT_MODEL,
 }
 
 
@@ -185,6 +186,99 @@ async def stop_execution(conv_id: str):
 
 
 # =========================
+# SYSTEM / HARDWARE
+# =========================
+
+@app.get("/system/hardware")
+async def get_hardware():
+    import psutil
+    ram_gb = round(psutil.virtual_memory().total / (1024**3), 1)
+    vram_gb = 0
+    gpu_name = "Unknown / Integrated"
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        vram_gb = round(pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024**3), 1)
+        gpu_name = pynvml.nvmlDeviceGetName(handle)
+        if isinstance(gpu_name, bytes):
+            gpu_name = gpu_name.decode()
+    except Exception:
+        pass
+    return {"ram_gb": ram_gb, "vram_gb": vram_gb, "gpu_name": gpu_name}
+
+
+# =========================
+# MODEL MANAGEMENT
+# =========================
+
+@app.get("/models/installed")
+async def get_installed_models():
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get("http://localhost:11434/api/tags")
+            data = r.json()
+            names = [m["name"] for m in data.get("models", [])]
+            return {"models": names}
+    except Exception:
+        return {"models": []}
+
+
+@app.post("/models/pull")
+async def pull_model(body: dict):
+    model = body.get("model", "").strip()
+    if not model:
+        return {"error": "model required"}
+
+    import httpx
+    from fastapi.responses import StreamingResponse
+
+    async def stream():
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                "http://localhost:11434/api/pull",
+                json={"name": model, "stream": True},
+            ) as r:
+                async for line in r.aiter_lines():
+                    if line:
+                        yield f"data: {line}\n\n"
+        yield "data: {\"status\": \"done\"}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.delete("/models/{model_name:path}")
+async def delete_model(model_name: str):
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.request(
+                "DELETE",
+                "http://localhost:11434/api/delete",
+                json={"name": model_name},
+            )
+            return {"deleted": r.status_code in (200, 204), "model": model_name}
+    except Exception as e:
+        return {"deleted": False, "error": str(e)}
+
+
+@app.get("/models/active")
+async def get_active_model():
+    return {"model": _state["model"]}
+
+
+@app.post("/models/active")
+async def set_active_model(body: dict):
+    model = body.get("model", "").strip()
+    if not model:
+        return {"error": "model required"}
+    _state["model"] = model
+    return {"model": model}
+
+
+# =========================
 # WEBSOCKET CHAT
 # =========================
 
@@ -227,6 +321,7 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
                     user_input,
                     conv_id,
                     _state["project_index"],
+                    _state["model"],
                 )
             except Exception as e:
                 print(f"[WS] Error: {e}")

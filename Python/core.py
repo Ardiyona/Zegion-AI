@@ -134,7 +134,7 @@ def _build_ollama_history(conv_id: str, limit: int = 20) -> list[dict]:
 # PIPELINE MODES
 # =========================
 
-def run_chat(user_input: str, conv_id: str) -> Optional[str]:
+def run_chat(user_input: str, conv_id: str, model: str = DEFAULT_MODEL) -> Optional[str]:
     """
     Chat Mode: Langsung ke model, tanpa Planner/Executor.
 
@@ -144,7 +144,7 @@ def run_chat(user_input: str, conv_id: str) -> Optional[str]:
     chat_messages.append({"role": "user", "content": user_input})
 
     try:
-        return _stream_chat(model=DEFAULT_MODEL, messages=chat_messages, conv_id=conv_id)
+        return _stream_chat(model=model, messages=chat_messages, conv_id=conv_id)
     except _CancelledError:
         return None
     except Exception as e:
@@ -260,6 +260,7 @@ def handle_message(
     user_input: str,
     conv_id: str,
     project_index: str = "",
+    model: str = DEFAULT_MODEL,
 ) -> tuple[Optional[str], str, str, list]:
     """
     Handle 1 pesan user — routing ke mode yang tepat.
@@ -309,7 +310,7 @@ def handle_message(
     # ── CHAT MODE ─────────────────────────────────────
     if mode == MODE_CHAT:
         clear_cancel(conv_id)
-        final_response = run_chat(clean_input, conv_id)
+        final_response = run_chat(clean_input, conv_id, model=model)
         if final_response is None or pop_was_cancelled(conv_id) or is_cancelled(conv_id):
             clear_cancel(conv_id)
             return None, conv_id, mode, plan
