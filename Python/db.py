@@ -207,6 +207,17 @@ def add_message(conv_id, role, content, mode=None, mode_key=None, plan=None):
     }
 
 
+def delete_message(msg_id: int) -> bool:
+    """Hapus 1 pesan by ID. Return True jika berhasil."""
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM messages WHERE id = ?", (msg_id,))
+        conn.commit()
+        return conn.total_changes > 0
+    finally:
+        conn.close()
+
+
 def get_messages(conv_id, limit=200):
     """Ambil semua pesan dari 1 conversation. Return list of dicts."""
     conn = get_connection()

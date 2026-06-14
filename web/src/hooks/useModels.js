@@ -86,7 +86,7 @@ export function useModels() {
     }
   }, []);
 
-  const downloadModel = useCallback(async (name, onComplete) => {
+  const downloadModel = useCallback(async (name, onComplete, onStorageExceeded) => {
     setIsDownloading(prev => new Set(prev).add(name));
     setDownloadProgress(prev => ({ ...prev, [name]: { status: 'Preparing...', percent: 0 } }));
 
@@ -143,8 +143,14 @@ export function useModels() {
 
               const sp = speedRefs.current[name];
               if (sp) {
-                // First chunk with bytes — anchor baseline, don't compute speed yet
+                // First chunk with bytes — check storage, anchor baseline
                 if (sp.lastBytes === -1) {
+                  const freeBytes = hardware.disk_free_gb * 1024 ** 3;
+                  if (freeBytes > 0 && bytesTotal > freeBytes) {
+                    controller.abort();
+                    onStorageExceeded?.(name, bytesTotal / 1024 ** 3, hardware.disk_free_gb);
+                    return;
+                  }
                   sp.lastBytes = bytesDown;
                   sp.lastTime = Date.now();
                 }

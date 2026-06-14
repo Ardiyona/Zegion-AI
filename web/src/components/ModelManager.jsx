@@ -14,14 +14,13 @@ const statPill = {
   color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace',
 };
 
-const btnBase = {
-  padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
-  border: 'none', cursor: 'pointer', fontFamily: 'Inter, sans-serif',
-  transition: 'all 0.15s ease',
-};
-const btnPrimary = { ...btnBase, background: 'var(--accent-dim)', color: 'var(--accent-hover)', border: '1px solid rgba(124,106,255,0.25)' };
-const btnDanger  = { ...btnBase, background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid rgba(248,113,113,0.25)' };
-const btnAccent  = { ...btnBase, background: 'var(--accent)', color: 'white', width: '100%' };
+const btn        = 'mm-btn';
+const btnPrimary = 'mm-btn mm-btn-primary';
+const btnDanger  = 'mm-btn mm-btn-danger';
+const btnAccent  = 'mm-btn mm-btn-accent';
+const btnCancel  = 'mm-btn mm-btn-cancel';
+const btnGhost   = 'mm-btn mm-btn-ghost';
+const btnNeutral = 'mm-btn mm-btn-neutral';
 
 const FILTER_TABS = ['All', 'Installed', 'Compatible'];
 
@@ -194,10 +193,66 @@ function ProgressBar({ percent, status, isError, bytesDown, bytesTotal, speedBps
   );
 }
 
+// ── Storage warning dialog ───────────────────────────────────────────────────
+
+function StorageWarningDialog({ modelName, required, available, onClose }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: 'var(--bg-elevated)', border: '1px solid rgba(248,113,113,0.35)',
+          borderRadius: '16px', padding: '28px 32px', maxWidth: '380px', width: '90%',
+          display: 'flex', flexDirection: 'column', gap: '16px',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '20px' }}>🚫</span>
+          <span style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text-primary)' }}>
+            Not enough disk space
+          </span>
+        </div>
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+          <strong style={{ color: 'var(--text-primary)', fontFamily: 'JetBrains Mono, monospace' }}>{modelName}</strong> requires{' '}
+          <strong style={{ color: '#f87171' }}>{required} GB</strong> but only{' '}
+          <strong style={{ color: '#fbbf24' }}>{available.toFixed(1)} GB</strong> is available.
+        </p>
+        <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Free up space or choose a smaller model before downloading.
+        </p>
+        <button
+          onClick={onClose}
+          className={btnNeutral}
+          style={{ alignSelf: 'flex-end', padding: '8px 20px' }}
+        >
+          Got it
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Curated model card ───────────────────────────────────────────────────────
 
-function ModelCard({ model, onSetActive, onDownload, onDelete, onCancel, cpuOnly }) {
+function ModelCard({ model, onSetActive, onDownload, onDelete, onCancel, cpuOnly, diskFreeGb }) {
   const { active: isActive, installed: isInstalled, downloading: isDownloading } = model;
+  const [showStorageWarn, setShowStorageWarn] = useState(false);
+
+  function handleDownload() {
+    if (diskFreeGb > 0 && model.size_gb > diskFreeGb) {
+      setShowStorageWarn(true);
+      return;
+    }
+    onDownload(model.name);
+  }
 
   return (
     <div style={{
@@ -255,20 +310,29 @@ function ModelCard({ model, onSetActive, onDownload, onDelete, onCancel, cpuOnly
             speedBps={model.progress.speedBps}
             eta={model.progress.eta}
           />
-          <button onClick={() => onCancel(model.name)} style={{ ...btnBase, background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid rgba(248,113,113,0.25)', fontSize: '11px', padding: '4px 10px' }}>
+          <button onClick={() => onCancel(model.name)} className={btnCancel}>
             ✕ Cancel
           </button>
         </div>
       ) : isInstalled ? (
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          {!isActive && <button onClick={() => onSetActive(model.name)} style={btnPrimary}>Set Active</button>}
-          {!isActive && <button onClick={() => onDelete(model.name)} style={btnDanger}>Delete</button>}
+          {!isActive && <button onClick={() => onSetActive(model.name)} className={btnPrimary}>Set Active</button>}
+          {!isActive && <button onClick={() => onDelete(model.name)} className={btnDanger}>Delete</button>}
           {isActive && <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 0' }}>Currently active for all conversations</span>}
         </div>
       ) : (
-        <button onClick={() => onDownload(model.name)} style={btnAccent} disabled={isDownloading}>
+        <button onClick={handleDownload} className={btnAccent} disabled={isDownloading}>
           ↓ Download ({model.size_gb} GB)
         </button>
+      )}
+
+      {showStorageWarn && (
+        <StorageWarningDialog
+          modelName={model.name}
+          required={model.size_gb}
+          available={diskFreeGb}
+          onClose={() => setShowStorageWarn(false)}
+        />
       )}
     </div>
   );
@@ -340,8 +404,8 @@ function ExtraInstalledCard({ name, hardware, activeModel, onSetActive, onDelete
       </div>
 
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-        {!isActive && <button onClick={() => onSetActive(name)} style={btnPrimary}>Set Active</button>}
-        {!isActive && <button onClick={() => onDelete(name)} style={btnDanger}>Delete</button>}
+        {!isActive && <button onClick={() => onSetActive(name)} className={btnPrimary}>Set Active</button>}
+        {!isActive && <button onClick={() => onDelete(name)} className={btnDanger}>Delete</button>}
         {isActive && <span style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 0' }}>Currently active for all conversations</span>}
       </div>
     </div>
@@ -350,8 +414,9 @@ function ExtraInstalledCard({ name, hardware, activeModel, onSetActive, onDelete
 
 // ── Custom download section ──────────────────────────────────────────────────
 
-function CustomDownloadSection({ downloadModel, cancelDownload, downloadProgress, isDownloading, onComplete }) {
+function CustomDownloadSection({ downloadModel, cancelDownload, downloadProgress, isDownloading, onComplete, diskFreeGb }) {
   const [input, setInput] = useState('');
+  const [storageWarn, setStorageWarn] = useState(null); // { required, available }
 
   const trimmed = input.trim();
   const isValid = trimmed.length > 0 && /[a-zA-Z]/.test(trimmed);
@@ -360,7 +425,11 @@ function CustomDownloadSection({ downloadModel, cancelDownload, downloadProgress
 
   const handleDownload = () => {
     if (!isValid || isActive) return;
-    downloadModel(trimmed, () => setInput(''));
+    downloadModel(
+      trimmed,
+      () => setInput(''),
+      (_name, required, available) => setStorageWarn({ required, available }),
+    );
   };
 
   const handleKeyDown = (e) => {
@@ -399,7 +468,8 @@ function CustomDownloadSection({ downloadModel, cancelDownload, downloadProgress
         {isActive ? (
           <button
             onClick={() => cancelDownload(trimmed)}
-            style={{ ...btnBase, background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid rgba(248,113,113,0.25)', whiteSpace: 'nowrap' }}
+            className={btnCancel}
+            style={{ whiteSpace: 'nowrap' }}
           >
             ✕ Cancel
           </button>
@@ -407,14 +477,8 @@ function CustomDownloadSection({ downloadModel, cancelDownload, downloadProgress
           <button
             onClick={handleDownload}
             disabled={!isValid}
-            style={{
-              ...btnBase,
-              background: isValid ? 'var(--accent)' : 'var(--bg-surface)',
-              color: isValid ? 'white' : 'var(--text-muted)',
-              border: '1px solid var(--border-subtle)',
-              cursor: isValid ? 'pointer' : 'not-allowed',
-              whiteSpace: 'nowrap',
-            }}
+            className={isValid ? btnAccent : `${btn} mm-btn-ghost`}
+            style={{ whiteSpace: 'nowrap', width: 'auto' }}
           >
             ↓ Download
           </button>
@@ -435,6 +499,15 @@ function CustomDownloadSection({ downloadModel, cancelDownload, downloadProgress
         <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
           Any model name from ollama.com/library
         </span>
+      )}
+
+      {storageWarn && (
+        <StorageWarningDialog
+          modelName={trimmed}
+          required={Math.round(storageWarn.required * 10) / 10}
+          available={storageWarn.available}
+          onClose={() => setStorageWarn(null)}
+        />
       )}
     </div>
   );
@@ -511,10 +584,7 @@ export function ModelManager({
             <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Model Manager</h2>
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0' }}>Browse, download, and manage Ollama models</p>
           </div>
-          <button
-            onClick={refresh}
-            style={{ ...btnBase, background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)', fontSize: '12px' }}
-          >
+          <button onClick={refresh} className={btnGhost}>
             ↻ Refresh
           </button>
         </div>
@@ -572,14 +642,7 @@ export function ModelManager({
             <button
               key={tab}
               onClick={() => setFilterTab(tab)}
-              style={{
-                padding: '6px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 500,
-                border: '1px solid', fontFamily: 'Inter, sans-serif', cursor: 'pointer',
-                transition: 'all 0.15s',
-                background: filterTab === tab ? 'var(--accent-dim)' : 'var(--bg-elevated)',
-                color: filterTab === tab ? 'var(--accent-hover)' : 'var(--text-secondary)',
-                borderColor: filterTab === tab ? 'rgba(124,106,255,0.3)' : 'var(--border-subtle)',
-              }}
+              className={`mm-tab${filterTab === tab ? ' active' : ''}`}
             >
               {tab}
               {tab === 'Installed' && ` (${installedCount})`}
@@ -600,6 +663,7 @@ export function ModelManager({
           cancelDownload={cancelDownload}
           downloadProgress={downloadProgress}
           isDownloading={isDownloading}
+          diskFreeGb={hardware.disk_free_gb}
         />
 
         {/* Extra installed (non-curated) */}
@@ -655,6 +719,7 @@ export function ModelManager({
                   key={m.name}
                   model={m}
                   cpuOnly={cpuOnly}
+                  diskFreeGb={hardware.disk_free_gb}
                   onSetActive={setActiveModel}
                   onDownload={downloadModel}
                   onCancel={cancelDownload}

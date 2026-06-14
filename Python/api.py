@@ -8,7 +8,7 @@ import json
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.router import mode_label
@@ -130,16 +130,12 @@ async def get_conversation_messages(conv_id: str):
 
 
 @app.delete("/conversations/{conv_id}")
-async def delete_conv(conv_id: str):
+async def delete_conv(conv_id: str, background_tasks: BackgroundTasks):
     """
-    Smart delete: cek importance → summarize jika penting → simpan ke KB → hapus.
-    Bisa lambat jika perlu AI call untuk summarize.
+    Smart delete: langsung return, summarize + hapus jalan di background.
     """
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, smart_delete_conversation, conv_id
-    )
-    return result
+    background_tasks.add_task(smart_delete_conversation, conv_id)
+    return {"deleted": True, "conv_id": conv_id}
 
 
 # =========================
