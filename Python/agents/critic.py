@@ -25,7 +25,7 @@ FIX: (jika FAIL) instruksi perbaikan yang spesifik
 """
 
 
-def critique(user_request, results, exec_response):
+def critique(user_request, results, exec_response, model=None):
     """
     Evaluasi apakah hasil eksekusi BENAR dan LENGKAP.
     Fokus pada kesalahan dan kekurangan.
@@ -50,7 +50,7 @@ def critique(user_request, results, exec_response):
     results_text = _format_results(results)
 
     response = chat(
-        model=DEFAULT_MODEL,
+        model=model or DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": CRITIC_PROMPT},
             {

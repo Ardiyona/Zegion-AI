@@ -1,0 +1,10 @@
+isi
+Berikut 4 task Anda.
+• [TO DO] Add language option "bahasa indonesia"
+  ID: 86exy7dku | Priority: low | Assignee: — | List: Zegion
+• [TO DO] Adding rule based on frontend
+  ID: 86exy7dh1 | Priority: normal | Assignee: — | List: Zegion
+• [TO DO] Fix zegion execution and planner
+  ID: 86exy7d21 | Priority: normal | Assignee: — | List: Zegion
+• [TO DO] Optimize memory summarization for Zegion
+  ID: 86exy5xx6 | Priority: normal | Assignee: — | List: Zegion

@@ -27,7 +27,7 @@ SUGGESTIONS: (jika IMPROVE) daftar saran perbaikan spesifik, maks 3
 """
 
 
-def reflect(user_request, results, exec_response):
+def reflect(user_request, results, exec_response, model=None):
     """
     Evaluasi apakah hasil bisa ditingkatkan kualitasnya.
     Fokus pada improvement, bukan bug fixing.
@@ -52,7 +52,7 @@ def reflect(user_request, results, exec_response):
     results_text = _format_results(results)
 
     response = chat(
-        model=DEFAULT_MODEL,
+        model=model or DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": REFLECTION_PROMPT},
             {
