@@ -53,6 +53,8 @@ ATURAN:
 3. Setelah hasil tool diterima dan cukup untuk menjawab user, LANGSUNG tulis [DONE] diikuti jawaban.
 4. JANGAN buat file untuk menyimpan jawaban, ringkasan, atau hasil pencarian. Gunakan [DONE] saja.
 5. WRITE_FILE dan EXECUTE HANYA jika user meminta membuat/menulis file atau menjalankan kode.
+6. CLICKUP_UPDATE_TASK: HANYA sertakan field yang user minta. Jangan ubah status/priority/name/description jika user tidak meminta.
+7. Jika tool gagal/error, coba pendekatan LAIN. Jika 2x gagal, tulis [DONE] dengan penjelasan error.
 
 FORMAT TOOL:
 [READ_FILE path="file.py"]
@@ -79,6 +81,8 @@ CONTOH BENAR:
 User: "list task saya" → [CLICKUP_GET_TASKS] → (terima hasil) → [DONE] Berikut task Anda: ...
 User: "baca file main.py" → [READ_FILE path="main.py"] → (terima isi) → [DONE] Isi file main.py: ...
 User: "cari info bitcoin" → [WEB_SEARCH query="harga bitcoin"] → (terima hasil) → [DONE] Harga bitcoin saat ini: ...
+User: "tambah deskripsi task X" → [CLICKUP_UPDATE_TASK task_id="X" description="..."] → [DONE]
+User: "ubah status task X jadi done" → [CLICKUP_UPDATE_TASK task_id="X" status="done"] → [DONE]
 """
 
 
@@ -392,6 +396,9 @@ _DIRECT_RESPONSE_TOOLS = {
     "SEMANTIC_SEARCH",
     "SEARCH",
     "SUMMARIZE_FILE",
+    "CLICKUP_UPDATE_TASK",
+    "CLICKUP_ADD_COMMENT",
+    "CLICKUP_CREATE_TASK",
 }
 
 # Keywords yang menandakan user memang ingin membuat/menulis file
@@ -424,6 +431,18 @@ def _user_wants_execute(user_request: str) -> bool:
     return any(kw in req for kw in keywords)
 
 
+def _user_wants_update(user_request: str) -> bool:
+    """Cek apakah user secara eksplisit meminta update/perubahan pada sesuatu."""
+    if not user_request:
+        return False
+    keywords = [
+        "update", "ubah", "perbarui", "edit", "ganti", "tambah",
+        "tambahkan", "modify", "change", "set", "atur", "assign",
+    ]
+    req = user_request.lower()
+    return any(kw in req for kw in keywords)
+
+
 def execute_plan(
     plan: list[dict],
     task_id: Optional[str] = None,
@@ -440,6 +459,13 @@ def execute_plan(
     from agents.task_queue import update_task_step
 
     exec_model = model or DEFAULT_MODEL
+
+    # Extract expected tool actions from plan (for completion tracking)
+    plan_actions = [
+        t.get("action", "").upper()
+        for t in plan
+        if t.get("action", "").upper() not in ("RESPOND", "DONE")
+    ]
 
     plan_text = "\n".join(
         f"{t.get('step', i+1)}. {t.get('action', '?')}: {t.get('reason', '')} "
@@ -470,6 +496,7 @@ def execute_plan(
     total_output_tokens = 0
     total_prompt_eval_s = 0.0
     total_gen_s = 0.0
+    consecutive_errors = 0  # Circuit breaker: track consecutive tool errors
 
     for step in range(MAX_EXECUTOR_STEPS):
 
@@ -511,35 +538,146 @@ def execute_plan(
         if "[DONE]" in ai:
             done_idx = ai.index("[DONE]")
             final_response = ai[done_idx + 6:].strip()
-            print(f"    ✅ DONE: {final_response[:2000]}{'...' if len(final_response) > 2000 else ''}")
+        
+            # If [DONE] is empty, synthesize from tool results
+            if not final_response and results:
+                success_results = [
+                    r for r in results
+                    if not str(r.get("result", "")).startswith("Error")
+                    and r.get("action") not in ("RESPOND", "DONE")
+                ]
+                if success_results:
+                    parts = []
+                    for r in success_results[-3:]:  # last 3 successful results
+                        action = r.get("action", "")
+                        result = str(r.get("result", ""))[:300]
+                        target = r.get("target", "")
+                        parts.append(f"[{action}] {target}: {result}")
+                    final_response = "\n".join(parts)
+                    print(f"    \u26a0\ufe0f  Empty [DONE] — synthesized response from {len(success_results)} tool results")
+        
+            print(f"    \u2705 DONE: {final_response[:2000]}{'...' if len(final_response) > 2000 else ''}")
             if task_id:
                 update_task_step(task_id, step, {
                     "step": step + 1, "action": "DONE", "result": final_response,
                 })
             break
 
-        tool_used, tool_name, tool_target, tool_result = _handle_tools(ai)
+        # ── PRE-PARSE: detect intended tool BEFORE executing ──
+        exec_text = ai  # may be modified by guards below
 
-        # ── CODE-LEVEL GUARD: Tolak WRITE_FILE jika user tidak minta file ──
+        # ── FIELD MUTATION GUARD: strip unintended params from CLICKUP_UPDATE_TASK ──
+        update_match = _find_last(
+            r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?(?:\s+description="(.*?)")?\]',
+            exec_text, re.DOTALL
+        )
+        if update_match:
+            ai_status = update_match.group(2)
+            ai_priority = update_match.group(3)
+            ai_name = update_match.group(4)
+            ai_description = update_match.group(5)
+            included_fields = {k for k, v in {
+                'status': ai_status, 'priority': ai_priority,
+                'name': ai_name, 'description': ai_description,
+            }.items() if v}
+
+            # Determine which fields user explicitly asked to change
+            req = user_request.lower()
+            allowed_fields = set()
+            if any(kw in req for kw in ['deskripsi', 'description', 'desc', 'keterangan', 'detail']):
+                allowed_fields.add('description')
+            if any(kw in req for kw in ['status', 'keadaan', 'progress']):
+                allowed_fields.add('status')
+            if any(kw in req for kw in ['priority', 'prioritas']):
+                allowed_fields.add('priority')
+            if any(kw in req for kw in ['nama', 'judul', 'title', 'rename']):
+                allowed_fields.add('name')
+
+            if allowed_fields and included_fields:
+                extra_fields = included_fields - allowed_fields
+                if extra_fields:
+                    # Execute update DIRECTLY with only allowed fields (bypass f-string reconstruction)
+                    tid = update_match.group(1)
+                    print(f"    ⚠️  FIELD GUARD: stripped fields {extra_fields}, keeping {allowed_fields & included_fields}")
+                    tool_result = clickup_smart_update_task(
+                        tid,
+                        status=ai_status if 'status' in allowed_fields else None,
+                        priority=ai_priority if 'priority' in allowed_fields else None,
+                        name=ai_name if 'name' in allowed_fields else None,
+                        description=ai_description if 'description' in allowed_fields else None,
+                    )
+                    result_str = str(tool_result)
+                    is_error = result_str.startswith("Error")
+                    limit = 2000 if is_error else 1000
+                    print(f"    🔧 [CLICKUP_UPDATE_TASK] → {tid} (filtered)")
+                    print(f"    📄 {result_str[:limit]}{'...' if len(result_str) > limit else ''}")
+                    results.append({
+                        "step": step + 1,
+                        "action": "CLICKUP_UPDATE_TASK",
+                        "target": tid,
+                        "result": tool_result,
+                    })
+                    if task_id:
+                        update_task_step(task_id, step, results[-1])
+                    exec_messages.append({"role": "assistant", "content": ai})
+                    if is_error:
+                        consecutive_errors += 1
+                        if consecutive_errors >= 2:
+                            print(f"    ⚠️  CIRCUIT BREAKER: {consecutive_errors} consecutive errors — forcing DONE")
+                            exec_messages.append({"role": "user", "content": (
+                                "Tool sudah gagal 2x berturut-turut. JANGAN coba lagi. "
+                                "Tulis [DONE] dan jelaskan error yang terjadi beserta saran untuk user."
+                            )})
+                            consecutive_errors = 0
+                        else:
+                            exec_messages.append({"role": "user", "content": (
+                                f"Error: {result_str}\n\n"
+                                "Coba pendekatan LAIN. Jangan ulangi parameter yang sama. "
+                                "Jika bingung, tulis [DONE] dengan penjelasan."
+                            )})
+                    else:
+                        consecutive_errors = 0
+                        exec_messages.append({"role": "user", "content": tool_result})
+                    continue  # Skip normal _handle_tools flow
+
+        # ── Now execute with (possibly cleaned) text ──
+        tool_used, tool_name, tool_target, tool_result = _handle_tools(exec_text)
+
+        # ── GUARD: Tolak WRITE_FILE jika user tidak minta file ──
         if tool_used and tool_name == "WRITE_FILE" and not _user_wants_file(user_request):
             print(f"    ⛔ GUARD: WRITE_FILE ditolak (user tidak meminta pembuatan file)")
             tool_used = False
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": "JANGAN buat file. Langsung tulis [DONE] diikuti jawaban Anda."})
+            consecutive_errors = 0
             continue
 
-        # ── CODE-LEVEL GUARD: Tolak EXECUTE jika user tidak minta run code ──
+        # ── GUARD: Tolak EXECUTE jika user tidak minta run code ──
         if tool_used and tool_name == "EXECUTE" and not _user_wants_execute(user_request):
             print(f"    ⛔ GUARD: EXECUTE ditolak (user tidak meminta eksekusi kode)")
             tool_used = False
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": "JANGAN jalankan file. Langsung tulis [DONE] diikuti jawaban Anda."})
+            consecutive_errors = 0
+            continue
+
+        # ── GUARD: Tolak CLICKUP_CREATE_TASK jika user tidak minta buat task baru ──
+        if tool_used and tool_name == "CLICKUP_CREATE_TASK" and not any(
+            kw in user_request.lower()
+            for kw in ['buat task', 'create task', 'tambah task', 'new task', 'task baru', 'buatkan task', 'add task']
+        ):
+            print(f"    ⛔ GUARD: CLICKUP_CREATE_TASK ditolak (user tidak meminta pembuatan task baru)")
+            tool_used = False
+            exec_messages.append({"role": "assistant", "content": ai})
+            exec_messages.append({"role": "user", "content": "JANGAN buat task baru. Selesaikan permintaan awal atau tulis [DONE] dengan penjelasan."})
+            consecutive_errors = 0
             continue
 
         if tool_used:
             print(f"    🔧 [{tool_name}] → {tool_target}")
             result_str = str(tool_result)
-            limit = 2000 if result_str.startswith("Error") else 1000
+            is_error = result_str.startswith("Error")
+            limit = 2000 if is_error else 1000
             print(f"    📄 {result_str[:limit]}{'...' if len(result_str) > limit else ''}")
             results.append({
                 "step": step + 1,
@@ -549,8 +687,33 @@ def execute_plan(
             })
             if task_id:
                 update_task_step(task_id, step, results[-1])
-            exec_messages.append({"role": "assistant", "content": ai})
-            exec_messages.append({"role": "user", "content": tool_result})
+            exec_messages.append({"role": "assistant", "content": exec_text})
+
+            # ── ERROR CIRCUIT BREAKER ──
+            if is_error:
+                consecutive_errors += 1
+                if consecutive_errors >= 2:
+                    print(f"    ⚠️  CIRCUIT BREAKER: {consecutive_errors} consecutive errors — forcing DONE")
+                    exec_messages.append({"role": "user", "content": (
+                        "Tool sudah gagal 2x berturut-turut. JANGAN coba lagi. "
+                        "Tulis [DONE] dan jelaskan error yang terjadi beserta saran untuk user."
+                    )})
+                    consecutive_errors = 0
+                else:
+                    exec_messages.append({"role": "user", "content": (
+                        f"Error: {result_str}\n\n"
+                        "Coba pendekatan LAIN. Jangan ulangi parameter yang sama. "
+                        "Jika bingung, tulis [DONE] dengan penjelasan."
+                    )})
+            else:
+                consecutive_errors = 0
+                exec_messages.append({"role": "user", "content": tool_result})
+
+            # Check if all planned actions are done → hint model to write [DONE]
+            done_actions = [r.get("action", "").upper() for r in results]
+            if plan_actions and all(a in done_actions for a in plan_actions):
+                exec_messages.append({"role": "user", "content": "Semua langkah rencana sudah selesai. Tulis [DONE] diikuti ringkasan hasil."})
+                plan_actions = []  # prevent re-triggering
         else:
             print(f"    💭 (no tool used, asking AI to continue)")
             exec_messages.append({"role": "assistant", "content": ai})
@@ -612,7 +775,7 @@ def generate_response(
     resp_messages = [
         {
             "role": "system",
-            "content": "Kamu adalah AI assistant. Berdasarkan hasil tool yang sudah dijalankan, jawab pertanyaan user secara lengkap dan jelas. Jawab dalam bahasa Indonesia."
+            "content": "You are an AI assistant. Based on the tool results, answer the user's question thoroughly and clearly. Respond in the same language the user used."
         },
         {
             "role": "user",

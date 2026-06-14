@@ -100,7 +100,7 @@ Buat ringkasan singkat dari percakapan berikut. Fokus pada:
 3. Konteks yang perlu diingat untuk percakapan selanjutnya
 
 Format ringkasan sebagai bullet points.
-Jawab langsung tanpa basa-basi, dalam bahasa Indonesia.
+Jawab langsung tanpa basa-basi, dalam bahasa yang sama dengan percakapan.
 
 Percakapan:
 {conversation[:5000]}"""
