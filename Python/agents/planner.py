@@ -1,4 +1,5 @@
 import json
+import time
 from ollama import chat
 from config import DEFAULT_MODEL
 
@@ -86,25 +87,51 @@ Contoh output untuk "buat task Fix Login di list Development":
 """
 
 
-def create_plan(user_message, project_index=""):
+def create_plan(user_message, project_index="", model=None):
     """
     Buat rencana langkah-langkah berdasarkan permintaan user.
     Return: (plan, raw)
     """
+    plan_model = model or DEFAULT_MODEL
     context = ""
     if project_index:
         context = f"\n\nKonteks project saat ini:\n{project_index}\n"
 
+    messages = [
+        {"role": "system", "content": PLANNER_PROMPT},
+        {"role": "user", "content": f"{user_message}{context}"}
+    ]
+
+    prompt_chars = sum(len(m["content"]) for m in messages)
+
+    start = time.time()
     response = chat(
-        model=DEFAULT_MODEL,
-        messages=[
-            {"role": "system", "content": PLANNER_PROMPT},
-            {"role": "user", "content": f"{user_message}{context}"}
-        ]
+        model=plan_model,
+        messages=messages
     )
+    elapsed = time.time() - start
 
     raw = response["message"]["content"]
     plan = _extract_json(raw)
+
+    # Telemetry
+    p_eval_count = response.get("prompt_eval_count", 0)
+    eval_count = response.get("eval_count", 0)
+    p_eval_s = response.get("prompt_eval_duration", 0) / 1e9
+    gen_s = response.get("eval_duration", 0) / 1e9
+    tps = eval_count / gen_s if gen_s > 0 else 0
+
+    print(f"\n  [PLANNER]")
+    print(f"  Model: {plan_model}")
+    print(f"  Prompt chars: {prompt_chars:,}")
+    print(f"  Prompt tokens: {p_eval_count:,}")
+    print(f"  Output tokens: {eval_count:,}")
+    print(f"  Prompt eval: {p_eval_s:.1f}s")
+    print(f"  Generation: {gen_s:.1f}s")
+    print(f"  Total: {elapsed:.1f}s")
+    if tps > 0:
+        print(f"  TPS: {tps:.2f}")
+    print()
 
     return plan, raw
 

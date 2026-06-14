@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Optional
 
-from agents.executor import _stream_chat, _CancelledError
+from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS
 
 from config import (
     AGENT_NAME,
@@ -153,6 +153,33 @@ def run_chat(user_input: str, conv_id: str, model: str = DEFAULT_MODEL) -> Optio
         return f"Error: {e}"
 
 
+def _should_skip_responder(results: list[dict], exec_response: str) -> bool:
+    """
+    Tentukan apakah Responder bisa di-skip.
+
+    Skip jika:
+    - Executor sudah punya jawaban [DONE] yang tidak kosong
+    - Semua tool yang dipakai adalah simple read-only tools (direct response)
+    - ATAU exec_response sudah cukup panjang dan informatif (>100 char)
+    """
+    if not exec_response:
+        return False
+
+    tool_actions = {r.get("action") for r in results if r.get("action") not in ("RESPOND", "DONE")}
+    if not tool_actions:
+        return True  # tidak ada tool, langsung pakai exec_response
+
+    # Semua tool adalah direct-response tools
+    if tool_actions.issubset(_DIRECT_RESPONSE_TOOLS):
+        return True
+
+    # Jika DONE sudah cukup panjang/informatif, skip juga
+    if len(exec_response) > 100:
+        return True
+
+    return False
+
+
 def run_quick(
     user_request: str,
     plan: list[dict],
@@ -161,22 +188,26 @@ def run_quick(
     conv_id: Optional[str] = None,
     model: str = DEFAULT_MODEL,
 ) -> str:
-    """Quick Mode: Planner → Executor → Responder."""
-    results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model)
+    """Quick Mode: Planner → Executor → (Responder jika perlu)."""
+    results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
 
     if pop_was_cancelled(conv_id):
         return ""
 
-    has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
-
-    if has_tools:
-        final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
-        if pop_was_cancelled(conv_id):
-            return ""
-    elif exec_response:
+    # Optimasi: skip Responder jika DONE sudah cukup
+    if _should_skip_responder(results, exec_response):
+        print("\n  ⚡ Skipping Responder (direct response mode)")
         final_response = exec_response
     else:
-        final_response = "Selesai."
+        has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
+        if has_tools:
+            final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
+            if pop_was_cancelled(conv_id):
+                return ""
+        elif exec_response:
+            final_response = exec_response
+        else:
+            final_response = "Selesai."
 
     complete_task(task_id, final_response)
     return final_response
@@ -198,12 +229,12 @@ def run_deep(
         if attempt > 0:
             print(f"\nCritic retry {attempt}/{MAX_CRITIC_RETRIES}...")
 
-        results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model)
+        results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
 
         if pop_was_cancelled(conv_id):
             return ""
 
-        passed, critic_feedback = critique(user_request, results, exec_response)
+        passed, critic_feedback = critique(user_request, results, exec_response, model=model)
 
         if passed:
             print("  Critic: PASS!")
@@ -212,7 +243,7 @@ def run_deep(
             print(f"  Critic: FAIL — {critic_feedback[:150]}")
             if attempt < MAX_CRITIC_RETRIES:
                 fix_prompt = f"{user_request}\n\n[CRITIC FEEDBACK]: {critic_feedback}"
-                new_plan, _ = create_plan(fix_prompt, project_index)
+                new_plan, _ = create_plan(fix_prompt, project_index, model=model)
                 if new_plan:
                     plan = new_plan
                 else:
@@ -220,21 +251,25 @@ def run_deep(
             else:
                 print("  Max retries tercapai.")
 
-    is_good, suggestions = reflect(user_request, results, exec_response)
+    is_good, suggestions = reflect(user_request, results, exec_response, model=model)
 
     if not is_good:
         print(f"  Saran: {suggestions[:150]}")
         if MAX_REFLECT_RETRIES > 0:
             improve_prompt = f"{user_request}\n\n[REFLECTION]: {suggestions}"
-            new_plan, _ = create_plan(improve_prompt, project_index)
+            new_plan, _ = create_plan(improve_prompt, project_index, model=model)
             if new_plan:
-                results, exec_response = execute_plan(new_plan, task_id=task_id, conv_id=conv_id, model=model)
+                results, exec_response = execute_plan(new_plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
                 if pop_was_cancelled(conv_id):
                     return ""
 
     has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
-    if has_tools:
+    # Optimasi: skip Responder jika DONE sudah cukup
+    if _should_skip_responder(results, exec_response):
+        print("\n  ⚡ Skipping Responder (direct response mode)")
+        final_response = exec_response
+    elif has_tools:
         final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
         if pop_was_cancelled(conv_id):
             return ""
@@ -323,7 +358,7 @@ def handle_message(
         return final_response, conv_id, mode, plan
 
     # ── AGENT MODE (QUICK / DEEP) ─────────────────────
-    plan_result, raw_plan = create_plan(clean_input, project_index)
+    plan_result, raw_plan = create_plan(clean_input, project_index, model=model)
 
     if not plan_result:
         add_message(conv_id, "assistant", raw_plan, mode_key=mode)
