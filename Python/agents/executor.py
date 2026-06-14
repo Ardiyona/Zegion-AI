@@ -70,7 +70,7 @@ isi file
 10. [CLICKUP_GET_TASKS status="open"] → filter by status
 11. [CLICKUP_GET_TASK_DETAIL task_id="id"] → detail 1 task
 12. [CLICKUP_CREATE_TASK list_name="nama list" name="nama task" description="desc" priority="normal"]
-13. [CLICKUP_UPDATE_TASK task_id="id" status="done" priority="high"]
+13. [CLICKUP_UPDATE_TASK task_id="id" status="done" priority="high" name="nama baru" description="deskripsi baru"]
 14. [CLICKUP_ADD_COMMENT task_id="id" comment="teks"]
 
 === CLICKUP LOW-LEVEL (untuk navigasi) ===
@@ -275,11 +275,11 @@ def _handle_tools(
         return True, "CLICKUP_CREATE_TASK", name, result
 
     # CLICKUP UPDATE TASK
-    m = re.search(r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?\]', ai_response)
+    m = re.search(r'\[CLICKUP_UPDATE_TASK task_id="(.*?)"(?:\s+status="(.*?)")?(?:\s+priority="(.*?)")?(?:\s+name="(.*?)")?(?:\s+description="(.*?)")?\]', ai_response, re.DOTALL)
     if m:
         task_id = m.group(1)
-        status, priority, name = m.group(2), m.group(3), m.group(4)
-        result = clickup_smart_update_task(task_id, status=status, priority=priority, name=name)
+        status, priority, name, description = m.group(2), m.group(3), m.group(4), m.group(5)
+        result = clickup_smart_update_task(task_id, status=status, priority=priority, name=name, description=description)
         return True, "CLICKUP_UPDATE_TASK", task_id, result
 
     # CLICKUP ADD COMMENT
@@ -366,7 +366,7 @@ def execute_plan(
         if "[DONE]" in ai:
             done_idx = ai.index("[DONE]")
             final_response = ai[done_idx + 6:].strip()
-            print(f"    ✅ DONE: {final_response[:150]}...")
+            print(f"    ✅ DONE: {final_response[:300]}...")
             if task_id:
                 update_task_step(task_id, step, {
                     "step": step + 1, "action": "DONE", "result": final_response,
@@ -377,7 +377,9 @@ def execute_plan(
 
         if tool_used:
             print(f"    🔧 [{tool_name}] → {tool_target}")
-            print(f"    📄 {str(tool_result)[:150]}...")
+            result_str = str(tool_result)
+            limit = 500 if result_str.startswith("Error") else 200
+            print(f"    📄 {result_str[:limit]}{'...' if len(result_str) > limit else ''}")
             results.append({
                 "step": step + 1,
                 "action": tool_name,
@@ -389,7 +391,7 @@ def execute_plan(
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": tool_result})
         else:
-            print(f"    💭 {ai[:150]}...")
+            print(f"    💭 {ai[:200]}...")
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": "Lanjutkan. Gunakan tool yang sesuai atau tulis [DONE] jika sudah selesai."})
 

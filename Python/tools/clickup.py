@@ -361,7 +361,7 @@ def clickup_smart_create_task(name, list_name, description="", priority=None):
     return f"✅ Task '{data.get('name', name)}' berhasil dibuat di list '{lst['name']}'! (ID: {data.get('id', '?')})"
 
 
-def clickup_smart_update_task(task_id, status=None, priority=None, name=None):
+def clickup_smart_update_task(task_id, status=None, priority=None, name=None, description=None):
     """[HIGH-LEVEL] Update task. Validasi workspace otomatis."""
     err = _validate()
     if err:
@@ -382,9 +382,11 @@ def clickup_smart_update_task(task_id, status=None, priority=None, name=None):
         payload["priority"] = priority_map.get(priority.lower(), 3)
     if name:
         payload["name"] = name
+    if description is not None:
+        payload["description"] = description
 
     if not payload:
-        return "Error: Tidak ada yang diupdate. Berikan status, priority, atau name."
+        return "Error: Tidak ada yang diupdate. Berikan status, priority, name, atau description."
 
     data = _safe_request("PUT", f"{BASE_URL}/task/{task_id}", json=payload)
     if isinstance(data, str):
