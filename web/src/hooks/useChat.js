@@ -95,6 +95,7 @@ export function useChat() {
   // ── Connect WebSocket ──────────────────────────────
   const connectWs = useCallback((convId) => {
     if (wsRef.current) {
+      wsRef.current.onclose = null; // intentional close — jangan trigger status 'error'
       wsRef.current.close();
       wsRef.current = null;
     }

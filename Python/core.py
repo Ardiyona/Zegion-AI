@@ -114,15 +114,15 @@ def quick_init() -> None:
 # OLLAMA HISTORY BUILDER
 # =========================
 
-def _build_ollama_history(conv_id: str, limit: int = 20) -> list[dict]:
+def _build_ollama_history(conv_id: str, limit: int = 20, model: str = DEFAULT_MODEL) -> list[dict]:
     """
     Ambil pesan terakhir dari DB dan format untuk Ollama.
     Inject: system prompt + long-term knowledge + recent messages.
     """
     kb_context = kb_get_context(max_entries=8)
-    system_content = SYSTEM_PROMPT
+    system_content = f"{SYSTEM_PROMPT}\nModel yang kamu gunakan saat ini: {model}."
     if kb_context:
-        system_content = f"{SYSTEM_PROMPT}\n\n{kb_context}"
+        system_content = f"{system_content}\n\n{kb_context}"
 
     messages = [{"role": "system", "content": system_content}]
     history = get_messages_as_ollama_format(conv_id, limit=limit)
@@ -140,7 +140,7 @@ def run_chat(user_input: str, conv_id: str, model: str = DEFAULT_MODEL) -> Optio
 
     Returns None if cancelled, otherwise the response string.
     """
-    chat_messages = _build_ollama_history(conv_id, limit=20)
+    chat_messages = _build_ollama_history(conv_id, limit=20, model=model)
     chat_messages.append({"role": "user", "content": user_input})
 
     try:

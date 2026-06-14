@@ -3,6 +3,8 @@ import { CURATED_MODELS } from '../models';
 
 const API = 'http://localhost:8000';
 
+const curatedNames = new Set(CURATED_MODELS.map(m => m.name));
+
 function getCompatibility(model, hardware) {
   const vram = hardware.vram_gb;
   const ram = hardware.ram_gb;
@@ -22,19 +24,22 @@ function getCompatibility(model, hardware) {
 
 export function useModels() {
   const [hardware, setHardware] = useState({ ram_gb: 0, vram_gb: 0, gpu_name: 'Loading...' });
+  const [hardwareLoaded, setHardwareLoaded] = useState(false);
   const [installedModels, setInstalledModels] = useState([]);
   const [activeModel, setActiveModelState] = useState('');
   const [downloadProgress, setDownloadProgress] = useState({});
   const [isDownloading, setIsDownloading] = useState(new Set());
   const abortRefs = useRef({});
+  const speedRefs = useRef({});
 
   const fetchHardware = useCallback(async () => {
     try {
       const r = await fetch(`${API}/system/hardware`);
       const data = await r.json();
       setHardware(data);
+      setHardwareLoaded(true);
     } catch {
-      // Ollama or server not running — keep defaults
+      setHardwareLoaded(true); // failed but no longer loading — show incompatible rather than skeleton forever
     }
   }, []);
 
@@ -81,12 +86,13 @@ export function useModels() {
     }
   }, []);
 
-  const downloadModel = useCallback(async (name) => {
+  const downloadModel = useCallback(async (name, onComplete) => {
     setIsDownloading(prev => new Set(prev).add(name));
     setDownloadProgress(prev => ({ ...prev, [name]: { status: 'Preparing...', percent: 0 } }));
 
     const controller = new AbortController();
     abortRefs.current[name] = controller;
+    speedRefs.current[name] = { lastBytes: -1, lastTime: Date.now(), samples: [] };
 
     try {
       const res = await fetch(`${API}/models/pull`, {
@@ -116,13 +122,65 @@ export function useModels() {
             const chunk = JSON.parse(raw);
             if (chunk.status === 'done') break;
 
-            let percent = 0;
-            if (chunk.total && chunk.completed) {
-              percent = Math.round((chunk.completed / chunk.total) * 100);
+            if (chunk.error) {
+              setDownloadProgress(prev => ({
+                ...prev,
+                [name]: { status: `Error: ${chunk.error}`, percent: 0, isError: true },
+              }));
+              return;
             }
+
+            let percent = 0;
+            let bytesDown = 0;
+            let bytesTotal = 0;
+            let speedBps = 0;
+            let eta = null;
+
+            if (chunk.total && chunk.completed) {
+              bytesDown = chunk.completed;
+              bytesTotal = chunk.total;
+              percent = Math.round((bytesDown / bytesTotal) * 100);
+
+              const sp = speedRefs.current[name];
+              if (sp) {
+                // First chunk with bytes — anchor baseline, don't compute speed yet
+                if (sp.lastBytes === -1) {
+                  sp.lastBytes = bytesDown;
+                  sp.lastTime = Date.now();
+                }
+
+                const now = Date.now();
+                const dt = (now - sp.lastTime) / 1000;
+                const db = bytesDown - sp.lastBytes;
+
+                if (dt >= 0.5 && db > 0) {
+                  const sample = db / dt;
+                  sp.samples.push(sample);
+                  if (sp.samples.length > 5) sp.samples.shift();
+                  speedBps = sp.samples.reduce((a, b) => a + b, 0) / sp.samples.length;
+                  sp.lastBytes = bytesDown;
+                  sp.lastTime = now;
+
+                  const remaining = bytesTotal - bytesDown;
+                  eta = speedBps > 0 ? Math.round(remaining / speedBps) : null;
+                } else if (sp.samples.length > 0) {
+                  speedBps = sp.samples.reduce((a, b) => a + b, 0) / sp.samples.length;
+                  const remaining = bytesTotal - bytesDown;
+                  eta = speedBps > 0 ? Math.round(remaining / speedBps) : null;
+                }
+              }
+            }
+
             setDownloadProgress(prev => ({
               ...prev,
-              [name]: { status: chunk.status || 'Downloading...', percent },
+              [name]: {
+                status: chunk.status || 'Downloading...',
+                percent,
+                bytesDown,
+                bytesTotal,
+                speedBps,
+                eta,
+              },
             }));
           } catch {
             // malformed chunk — skip
@@ -136,18 +194,26 @@ export function useModels() {
         delete next[name];
         return next;
       });
+      onComplete?.();
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        setDownloadProgress(prev => ({ ...prev, [name]: { status: 'Error', percent: 0 } }));
-      } else {
+      if (err.name === 'AbortError') {
+        // Delete partial file from Ollama cache so storage isn't wasted
+        try {
+          await fetch(`${API}/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        } catch {
+          // best-effort — ignore if Ollama unreachable
+        }
         setDownloadProgress(prev => {
           const next = { ...prev };
           delete next[name];
           return next;
         });
+      } else {
+        setDownloadProgress(prev => ({ ...prev, [name]: { status: 'Error', percent: 0 } }));
       }
     } finally {
       delete abortRefs.current[name];
+      delete speedRefs.current[name];
       setIsDownloading(prev => {
         const next = new Set(prev);
         next.delete(name);
@@ -160,31 +226,44 @@ export function useModels() {
     try {
       await fetch(`${API}/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
       await fetchInstalled();
-      // If deleted model was active, clear active
       setActiveModelState(prev => (prev === name ? '' : prev));
     } catch {
       // ignore
     }
   }, [fetchInstalled]);
 
+  const cpuOnly = hardware.vram_gb === 0;
+
   const models = CURATED_MODELS.map(m => ({
     ...m,
-    compatibility: getCompatibility(m, hardware),
+    compatibility: hardwareLoaded ? getCompatibility(m, hardware) : 'loading',
     installed: installedModels.includes(m.name),
     active: m.name === activeModel,
     downloading: isDownloading.has(m.name),
     progress: downloadProgress[m.name] || null,
   }));
 
+  const extraInstalled = installedModels.filter(name =>
+    !curatedNames.has(name) && !/embed|rerank/i.test(name)
+  );
+
+  const cancelDownload = useCallback((name) => {
+    abortRefs.current[name]?.abort();
+  }, []);
+
   return {
     hardware,
+    hardwareLoaded,
+    cpuOnly,
     models,
     installedModels,
+    extraInstalled,
     activeModel,
     downloadProgress,
     isDownloading,
     setActiveModel,
     downloadModel,
+    cancelDownload,
     deleteModel,
     refresh,
   };

@@ -21,6 +21,12 @@ export const CURATED_MODELS = [
   { name: "codellama:13b",   family: "Code",      desc: "Larger code model, better completions",                    params: "13B",   size_gb: 7.4,  vram_required_gb: 9,  ram_required_gb: 18 },
 ];
 
+export function estimateVram(modelName) {
+  const m = modelName.match(/(\d+(?:\.\d+)?)b/i);
+  if (!m) return 4.0;
+  return Math.round(parseFloat(m[1]) * 0.6 * 10) / 10;
+}
+
 export const FAMILY_COLORS = {
   Qwen:      { bg: 'rgba(124,106,255,0.12)', color: '#a78bff', border: 'rgba(124,106,255,0.3)' },
   Llama:     { bg: 'rgba(245,158,11,0.12)',  color: '#fbbf24', border: 'rgba(245,158,11,0.3)'  },

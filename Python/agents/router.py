@@ -47,8 +47,11 @@ CHAT_KEYWORDS = [
     r"^terima\s*kasih", r"^thanks", r"^makasih",
     r"^jelaskan", r"^ceritakan", r"^apa\s+bedanya",
     r"^kenapa", r"^mengapa", r"^bagaimana\s+cara",
-    r"^apakah\s+", r"^bisakah\s+",
+    r"apakah\s+", r"^bisakah\s+",
     r"^tolong\s+jelaskan", r"^apa\s+maksud",
+    # Pertanyaan identitas / status model
+    r"model\s+(apa|mana|yang)", r"pakai\s+model", r"masih\s+model",
+    r"kamu\s+(siapa|apa|pakai|model)", r"anda\s+(siapa|apa|pakai|model)",
 ]
 
 
@@ -76,7 +79,7 @@ def detect_mode(user_input):
             return MODE_CHAT
 
     # Default: kalau pendek → chat, kalau panjang → quick
-    if len(text) < 30:
+    if len(text) < 80:
         return MODE_CHAT
     else:
         return MODE_QUICK
