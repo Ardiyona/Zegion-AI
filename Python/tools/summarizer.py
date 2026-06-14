@@ -3,6 +3,7 @@ import json
 import hashlib
 from ollama import chat
 from tools.file_ops import read_file
+from config import DEFAULT_MODEL
 
 
 # =========================
@@ -62,7 +63,7 @@ def summarize_file(path):
 
     # Generate summary pakai AI lokal
     response = chat(
-        model="qwen3:4b",
+        model=DEFAULT_MODEL,
         messages=[
             {
                 "role": "user",

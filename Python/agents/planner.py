@@ -1,12 +1,11 @@
 import json
 from ollama import chat
+from config import DEFAULT_MODEL
 
 
 # =========================
 # CONFIG
 # =========================
-
-PLANNER_MODEL = "qwen3:4b"
 
 
 # =========================
@@ -97,7 +96,7 @@ def create_plan(user_message, project_index=""):
         context = f"\n\nKonteks project saat ini:\n{project_index}\n"
 
     response = chat(
-        model=PLANNER_MODEL,
+        model=DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": PLANNER_PROMPT},
             {"role": "user", "content": f"{user_message}{context}"}

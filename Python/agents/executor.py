@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from typing import Optional
 from ollama import chat as _ollama_chat
 
@@ -33,6 +34,7 @@ from tools.clickup import (
     clickup_smart_update_task,
     clickup_smart_add_comment,
 )
+from config import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +43,6 @@ logger = logging.getLogger(__name__)
 # CONFIG
 # =========================
 
-EXECUTOR_MODEL = "qwen3:4b"
-RESPONDER_MODEL = "qwen3:4b"
 MAX_EXECUTOR_STEPS = 10
 
 EXECUTOR_PROMPT = """Kamu adalah Executor AI. Tugasmu MENGERJAKAN rencana yang diberikan.
@@ -319,6 +319,7 @@ def execute_plan(
     plan: list[dict],
     task_id: Optional[str] = None,
     conv_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> tuple[list[dict], str]:
     """
     Executor AI Agent — mengerjakan plan dengan kemampuan berpikir.
@@ -327,6 +328,8 @@ def execute_plan(
     final_response is "" when cancelled — caller must check pop_was_cancelled().
     """
     from agents.task_queue import update_task_step
+
+    exec_model = model or DEFAULT_MODEL
 
     plan_text = "\n".join(
         f"{t.get('step', i+1)}. {t.get('action', '?')}: {t.get('reason', '')} "
@@ -346,27 +349,38 @@ def execute_plan(
 
     results: list[dict] = []
     final_response = ""
+    total_start = time.time()
 
     for step in range(MAX_EXECUTOR_STEPS):
 
         print(f"\n  🤖 Executor (step {step + 1}):")
 
+        step_start = time.time()
         try:
-            ai = _stream_chat(model=EXECUTOR_MODEL, messages=exec_messages, conv_id=conv_id)
+            ai = _stream_chat(model=exec_model, messages=exec_messages, conv_id=conv_id)
         except _CancelledError:
             print(f"    ⛔ Dibatalkan user (step {step + 1})")
             # final_response tetap "" — caller pakai pop_was_cancelled() untuk deteksi
             break
         except Exception as e:
-            print(f"    ❌ Stream error: {e}")
+            elapsed = time.time() - step_start
+            print(f"    ❌ Stream error: {e}  ({elapsed:.2f}s)")
             final_response = f"Error: {e}"
             break
+
+        elapsed = time.time() - step_start
+
+        # Tampilkan raw response dari AI untuk debugging
+        print(f"    🧠 Raw AI response ({elapsed:.2f}s):")
+        for line in ai.splitlines():
+            print(f"       | {line}")
+        print()
 
         # Tool parsing hanya setelah stream SELESAI penuh — tidak pada partial buffer
         if "[DONE]" in ai:
             done_idx = ai.index("[DONE]")
             final_response = ai[done_idx + 6:].strip()
-            print(f"    ✅ DONE: {final_response[:300]}...")
+            print(f"    ✅ DONE: {final_response[:2000]}{'...' if len(final_response) > 2000 else ''}")
             if task_id:
                 update_task_step(task_id, step, {
                     "step": step + 1, "action": "DONE", "result": final_response,
@@ -378,7 +392,7 @@ def execute_plan(
         if tool_used:
             print(f"    🔧 [{tool_name}] → {tool_target}")
             result_str = str(tool_result)
-            limit = 500 if result_str.startswith("Error") else 200
+            limit = 2000 if result_str.startswith("Error") else 1000
             print(f"    📄 {result_str[:limit]}{'...' if len(result_str) > limit else ''}")
             results.append({
                 "step": step + 1,
@@ -391,9 +405,12 @@ def execute_plan(
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": tool_result})
         else:
-            print(f"    💭 {ai[:200]}...")
+            print(f"    💭 (no tool used, asking AI to continue)")
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": "Lanjutkan. Gunakan tool yang sesuai atau tulis [DONE] jika sudah selesai."})
+
+    total_elapsed = time.time() - total_start
+    print(f"\n  ⏱  Executor total: {total_elapsed:.2f}s ({len(results)} tool calls)")
 
     return results, final_response
 
@@ -406,6 +423,7 @@ def generate_response(
     user_message: str,
     results: list[dict],
     conv_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> str:
     """
     Phase 4: Responder — generate final answer from execution results.
@@ -433,9 +451,10 @@ def generate_response(
     context = "\n\n".join(context_parts)
     print("\n  🤖 Responder generating answer...")
 
+    resp_start = time.time()
     try:
         ai = _stream_chat(
-            model=RESPONDER_MODEL,
+            model=model or DEFAULT_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -453,5 +472,14 @@ def generate_response(
     except Exception as e:
         logger.error("[responder] stream error: %s", e)
         return f"Error saat generate response: {e}"
+
+    resp_elapsed = time.time() - resp_start
+    print(f"  ⏱  Responder: {resp_elapsed:.2f}s")
+
+    # Tampilkan raw response Responder
+    print(f"  🧠 Responder raw response:")
+    for line in ai.splitlines():
+        print(f"       | {line}")
+    print()
 
     return ai
