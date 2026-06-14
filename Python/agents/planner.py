@@ -44,7 +44,7 @@ Setiap langkah harus berisi:
 - CLICKUP_GET_TASKS(status) → filter task by status
 - CLICKUP_GET_TASK_DETAIL(task_id) → detail lengkap 1 task
 - CLICKUP_CREATE_TASK(list_name, name, description, priority) → buat task (by nama list)
-- CLICKUP_UPDATE_TASK(task_id, status, priority) → update task
+- CLICKUP_UPDATE_TASK(task_id, status, priority, name, description) → update task
 - CLICKUP_ADD_COMMENT(task_id, comment) → tambah comment
 
 === CLICKUP LOW-LEVEL (hanya untuk navigasi/eksplorasi) ===
