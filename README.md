@@ -1,6 +1,6 @@
 # 🤖 Zegion AI
 
-**AI Agent lokal yang berjalan 100% di komputer Anda.** Tidak perlu API cloud, tidak ada biaya bulanan. Cukup Ollama + GPU.
+**AI Agent lokal yang berjalan 100% di komputer Anda.** Tidak perlu API cloud, tidak ada biaya bulanan. Cukup Ollama — GPU opsional, CPU-only pun bisa.
 
 Zegion adalah multi-agent AI assistant yang bisa membaca, menulis, dan menjalankan kode — serta terintegrasi dengan ClickUp untuk manajemen task.
 
@@ -13,11 +13,14 @@ Zegion adalah multi-agent AI assistant yang bisa membaca, menulis, dan menjalank
 - 🧠 **Multi-Agent Pipeline** — Planner → Executor → Critic → Reflection → Responder
 - 🔀 **3 Mode Otomatis** — Chat / Quick / Deep, dipilih otomatis oleh Router
 - 🌐 **Web UI Modern** — Antarmuka chat interaktif (React) dengan Conversation History
+- ⬡ **Model Manager** — Browse, download, dan kelola model Ollama langsung dari UI
+- 🔍 **Web Search** — Cari informasi real-time dari internet (DuckDuckGo / Brave / Serper)
 - 📚 **Knowledge Base** — Ingatan jangka panjang (Episodic Memory) berbasis SQLite
 - 🔎 **Semantic Search** — Cari kode berdasarkan makna, bukan keyword
 - 💾 **Task Queue** — Task disimpan, bisa dilanjutkan setelah restart
 - 📋 **ClickUp Integration** — Manajemen task dari chat dengan cache super cepat
 - 🔒 **Workspace Lock** — Hanya akses 1 workspace ClickUp yang dikonfigurasi
+- ⏹️ **Cancel Execution** — Hentikan respons AI kapan saja
 - ⚡ **100% Lokal** — Semua diproses di komputer Anda via Ollama
 
 ## 🏗️ Arsitektur
@@ -52,8 +55,9 @@ User Input
 ## 📋 Prasyarat
 
 - **Python** 3.10+
+- **Node.js** 18+ (untuk Web UI)
 - **Ollama** — [Download di sini](https://ollama.com/download)
-- **GPU** — Minimal 4GB VRAM (direkomendasikan)
+- **GPU** — Opsional. Tanpa GPU, model ringan (1B–4B) tetap bisa berjalan via CPU dengan RAM yang cukup
 
 ## 🚀 Instalasi
 
@@ -68,7 +72,7 @@ cd Zegion-AI/Python
 
 Download dan install Ollama dari **https://ollama.com/download**, lalu pastikan Ollama sudah berjalan di background.
 
-> **Model tidak perlu di-pull manual.** Buka Zegion → klik **Models** di sidebar → download model langsung dari UI.
+> **Model tidak perlu di-pull manual.** Buka Zegion → klik **Models** di sidebar → download model langsung dari UI. Tersedia 20+ model kurasi dengan info kompatibilitas hardware otomatis.
 >
 > Jika ingin langsung pakai via terminal (opsional):
 > ```bash
@@ -123,13 +127,18 @@ python main.py
 Edit file `.env` untuk mengubah pengaturan:
 
 ```env
-# Model (ganti jika punya GPU lebih besar)
+# Model default (bisa diganti lewat Model Manager di UI)
 DEFAULT_MODEL=qwen3:4b
 EMBEDDING_MODEL=nomic-embed-text
 
 # Pipeline tuning
 MAX_CRITIC_RETRIES=2
 MAX_REFLECT_RETRIES=1
+
+# Web Search (pilih salah satu provider, opsional)
+SEARCH_PROVIDER=duckduckgo     # duckduckgo | brave | serper
+BRAVE_API_KEY=your_key         # jika pakai Brave
+SERPER_API_KEY=your_key        # jika pakai Serper
 
 # ClickUp (opsional)
 CLICKUP_API_KEY=pk_your_api_key
@@ -189,16 +198,23 @@ You: update task abc123 status "in progress"
 │   ├── requirements.txt     
 │   │
 │   ├── agents/              # 🤖 AI Agents (Router, Planner, Executor, Critic, dll)
-│   ├── tools/               # 🔧 Tool functions (File Ops, ClickUp, Semantic)
+│   ├── tools/               # 🔧 Tool functions (File Ops, Web Search, ClickUp, Semantic)
 │   │
 │   └── data/                # 💾 Auto-generated data
 │       └── zegion.db        # SQLite database (History & Knowledge Base)
 │
 └── web/                     # 🌐 Frontend React (Vite)
     ├── src/
-    │   ├── components/      # UI (Sidebar, ChatInput, MessageList)
-    │   ├── hooks/           # useChat (WebSocket state manager)
-    │   └── index.css        # Premium Dark Theme
+    │   ├── components/
+    │   │   ├── Sidebar.jsx       # Navigasi + daftar conversation
+    │   │   ├── ChatInput.jsx     # Input pesan dengan stop button
+    │   │   ├── MessageList.jsx   # Tampilan pesan
+    │   │   └── ModelManager.jsx  # Browse, download & kelola model
+    │   ├── hooks/
+    │   │   ├── useChat.js        # WebSocket state manager
+    │   │   └── useModels.js      # Model management state
+    │   ├── models.js             # Daftar model kurasi + kompatibilitas
+    │   └── index.css             # Premium Dark Theme
     ├── package.json
     └── index.html
 ```
@@ -216,6 +232,12 @@ You: update task abc123 status "in progress"
 | `SUMMARIZE_FILE` | Ringkasan file dengan AI |
 | `SEMANTIC_SEARCH` | Cari kode berdasarkan makna |
 
+### Web Search Tools
+| Tool | Fungsi |
+|---|---|
+| `WEB_SEARCH` | Cari informasi real-time dari internet |
+| `SCRAPE_URL` | Ambil konten dari URL tertentu |
+
 ### ClickUp Tools
 | Tool | Fungsi |
 |---|---|
@@ -227,22 +249,24 @@ You: update task abc123 status "in progress"
 | `CLICKUP_UPDATE_TASK` | Update status/priority task |
 | `CLICKUP_ADD_COMMENT` | Tambah comment ke task |
 
+## 🖥️ Spesifikasi
+
+| Komponen | Minimum | Rekomendasi |
+|---|---|---|
+| GPU VRAM | — (opsional) | 4+ GB |
+| RAM | 8 GB (CPU-only) | 16 GB |
+| Storage | 5 GB | 20 GB |
+| Python | 3.10 | 3.12+ |
+| OS | Windows / Linux / macOS | — |
+
+> **Tanpa GPU:** Model ringan seperti `qwen3:0.6b`, `qwen3:1.7b`, atau `llama3.2:1b` bisa berjalan via CPU. Model Manager otomatis mendeteksi hardware dan menampilkan kompatibilitas.
+
 ## 🔒 Keamanan
 
 - API key disimpan di `.env` yang di-gitignore
 - ClickUp hanya bisa akses **1 workspace** yang dikonfigurasi
 - **Tidak ada fungsi delete** — by design, untuk mencegah kerusakan data
-- Semua proses berjalan lokal, tidak ada data yang dikirim ke cloud (kecuali ClickUp API)
-
-## 🖥️ Spesifikasi Minimum
-
-| Komponen | Minimum | Rekomendasi |
-|---|---|---|
-| GPU VRAM | 4 GB | 6+ GB |
-| RAM | 8 GB | 16 GB |
-| Storage | 5 GB | 10 GB |
-| Python | 3.10 | 3.12+ |
-| OS | Windows / Linux / macOS | — |
+- Semua proses berjalan lokal, tidak ada data yang dikirim ke cloud (kecuali ClickUp API dan Web Search)
 
 ## 📝 Lisensi
 
@@ -250,7 +274,7 @@ MIT License — Bebas digunakan dan dimodifikasi.
 
 ## 🙏 Credit
 
-- **Model**: [Qwen3:4b](https://ollama.com/library/qwen3) by Alibaba
+- **Model**: [Qwen3](https://ollama.com/library/qwen3) by Alibaba
 - **Embeddings**: [nomic-embed-text](https://ollama.com/library/nomic-embed-text) by Nomic AI
 - **Runtime**: [Ollama](https://ollama.com/)
 

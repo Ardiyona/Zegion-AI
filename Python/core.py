@@ -60,6 +60,7 @@ from db import (
     list_conversations,
     update_conversation_title,
     add_message,
+    delete_message,
     get_messages,
     get_messages_as_ollama_format,
     generate_title_from_message,
@@ -114,15 +115,15 @@ def quick_init() -> None:
 # OLLAMA HISTORY BUILDER
 # =========================
 
-def _build_ollama_history(conv_id: str, limit: int = 20) -> list[dict]:
+def _build_ollama_history(conv_id: str, limit: int = 20, model: str = DEFAULT_MODEL) -> list[dict]:
     """
     Ambil pesan terakhir dari DB dan format untuk Ollama.
     Inject: system prompt + long-term knowledge + recent messages.
     """
     kb_context = kb_get_context(max_entries=8)
-    system_content = SYSTEM_PROMPT
+    system_content = f"{SYSTEM_PROMPT}\nModel yang kamu gunakan saat ini: {model}."
     if kb_context:
-        system_content = f"{SYSTEM_PROMPT}\n\n{kb_context}"
+        system_content = f"{system_content}\n\n{kb_context}"
 
     messages = [{"role": "system", "content": system_content}]
     history = get_messages_as_ollama_format(conv_id, limit=limit)
@@ -140,7 +141,7 @@ def run_chat(user_input: str, conv_id: str, model: str = DEFAULT_MODEL) -> Optio
 
     Returns None if cancelled, otherwise the response string.
     """
-    chat_messages = _build_ollama_history(conv_id, limit=20)
+    chat_messages = _build_ollama_history(conv_id, limit=20, model=model)
     chat_messages.append({"role": "user", "content": user_input})
 
     try:
@@ -300,7 +301,8 @@ def handle_message(
     mode = forced_mode if forced_mode else auto_mode
     plan: list = []
 
-    add_message(conv_id, "user", clean_input)
+    user_msg = add_message(conv_id, "user", clean_input)
+    user_msg_id = user_msg["id"]
 
     conv = get_conversation(conv_id)
     if conv and conv["title"] == "New Chat":
@@ -313,6 +315,7 @@ def handle_message(
         final_response = run_chat(clean_input, conv_id, model=model)
         if final_response is None or pop_was_cancelled(conv_id) or is_cancelled(conv_id):
             clear_cancel(conv_id)
+            delete_message(user_msg_id)
             return None, conv_id, mode, plan
         add_message(conv_id, "assistant", final_response, mode="Chat", mode_key="chat")
         return final_response, conv_id, mode, plan
@@ -335,9 +338,10 @@ def handle_message(
     else:
         final_response = run_quick(clean_input, plan, task_id, project_index, conv_id=conv_id)
 
-    # Cancelled — jangan simpan ke DB
+    # Cancelled — jangan simpan ke DB, hapus user message yang sudah tersimpan
     if pop_was_cancelled(conv_id) or is_cancelled(conv_id) or not final_response:
         clear_cancel(conv_id)
+        delete_message(user_msg_id)
         return None, conv_id, mode, plan
 
     mode_name = mode_label(mode)

@@ -8,7 +8,7 @@ import json
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.router import mode_label
@@ -130,16 +130,12 @@ async def get_conversation_messages(conv_id: str):
 
 
 @app.delete("/conversations/{conv_id}")
-async def delete_conv(conv_id: str):
+async def delete_conv(conv_id: str, background_tasks: BackgroundTasks):
     """
-    Smart delete: cek importance → summarize jika penting → simpan ke KB → hapus.
-    Bisa lambat jika perlu AI call untuk summarize.
+    Smart delete: langsung return, summarize + hapus jalan di background.
     """
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, smart_delete_conversation, conv_id
-    )
-    return result
+    background_tasks.add_task(smart_delete_conversation, conv_id)
+    return {"deleted": True, "conv_id": conv_id}
 
 
 # =========================
@@ -191,7 +187,8 @@ async def stop_execution(conv_id: str):
 
 @app.get("/system/hardware")
 async def get_hardware():
-    import psutil
+    import psutil, os, pathlib, platform
+
     ram_gb = round(psutil.virtual_memory().total / (1024**3), 1)
     vram_gb = 0
     gpu_name = "Unknown / Integrated"
@@ -205,7 +202,36 @@ async def get_hardware():
             gpu_name = gpu_name.decode()
     except Exception:
         pass
-    return {"ram_gb": ram_gb, "vram_gb": vram_gb, "gpu_name": gpu_name}
+
+    # Detect Ollama models directory
+    ollama_models = os.environ.get("OLLAMA_MODELS")
+    if not ollama_models:
+        if platform.system() == "Windows":
+            ollama_models = str(pathlib.Path.home() / ".ollama" / "models")
+        else:
+            ollama_models = str(pathlib.Path.home() / ".ollama" / "models")
+
+    disk_free_gb = 0.0
+    disk_total_gb = 0.0
+    disk_drive = ""
+    try:
+        usage = psutil.disk_usage(ollama_models if pathlib.Path(ollama_models).exists() else str(pathlib.Path(ollama_models).anchor))
+        disk_free_gb = round(usage.free / (1024**3), 1)
+        disk_total_gb = round(usage.total / (1024**3), 1)
+        # Drive label: "C:" on Windows, "/" on Linux/Mac
+        anchor = pathlib.Path(ollama_models).anchor
+        disk_drive = anchor.rstrip("/\\").upper() or "/"
+    except Exception:
+        pass
+
+    return {
+        "ram_gb": ram_gb,
+        "vram_gb": vram_gb,
+        "gpu_name": gpu_name,
+        "disk_free_gb": disk_free_gb,
+        "disk_total_gb": disk_total_gb,
+        "disk_drive": disk_drive,
+    }
 
 
 # =========================

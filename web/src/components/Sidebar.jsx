@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 function formatTime(ts) {
   if (!ts) return '';
@@ -44,6 +45,10 @@ function ConversationItem({ conv, isActive, onSelect, onDelete }) {
   );
 }
 
+const NAV_ITEMS = [
+  { path: '/models', icon: '⬡', label: 'Models' },
+];
+
 export function Sidebar({
   conversations = [],
   activeConvId,
@@ -53,9 +58,10 @@ export function Sidebar({
   onDeleteConv,
   agentName = 'Zegion',
   agentVersion = '1.0',
-  view = 'chat',
-  onViewChange,
 }) {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+
   const statusConfig = {
     ready: { dot: '', label: 'Connected' },
     connecting: { dot: 'loading', label: 'Connecting...' },
@@ -63,7 +69,6 @@ export function Sidebar({
   };
   const { dot, label } = statusConfig[status] || statusConfig.connecting;
 
-  // Kelompokkan conversations by hari
   const today = new Date();
   const todayConvs = conversations.filter(c => {
     const d = new Date(c.updated_at * 1000);
@@ -73,6 +78,16 @@ export function Sidebar({
     const d = new Date(c.updated_at * 1000);
     return d.toDateString() !== today.toDateString();
   });
+
+  const handleSelectConv = (id) => {
+    onSelectConv(id);
+    navigate('/');
+  };
+
+  const handleNewChat = () => {
+    onNewChat();
+    navigate('/');
+  };
 
   return (
     <aside className="sidebar">
@@ -86,7 +101,7 @@ export function Sidebar({
       </div>
 
       {/* New Chat Button */}
-      <button className="sidebar-new-chat" onClick={onNewChat}>
+      <button className="sidebar-new-chat" onClick={handleNewChat}>
         ✦ &nbsp; New Chat
       </button>
 
@@ -99,8 +114,8 @@ export function Sidebar({
               <ConversationItem
                 key={conv.id}
                 conv={conv}
-                isActive={conv.id === activeConvId}
-                onSelect={onSelectConv}
+                isActive={conv.id === activeConvId && pathname === '/'}
+                onSelect={handleSelectConv}
                 onDelete={onDeleteConv}
               />
             ))}
@@ -114,8 +129,8 @@ export function Sidebar({
               <ConversationItem
                 key={conv.id}
                 conv={conv}
-                isActive={conv.id === activeConvId}
-                onSelect={onSelectConv}
+                isActive={conv.id === activeConvId && pathname === '/'}
+                onSelect={handleSelectConv}
                 onDelete={onDeleteConv}
               />
             ))}
@@ -129,30 +144,36 @@ export function Sidebar({
         )}
       </div>
 
-      {/* Models nav item */}
-      <button
-        onClick={() => onViewChange && onViewChange(view === 'models' ? 'chat' : 'models')}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '10px 12px',
-          borderRadius: 'var(--radius-md)',
-          background: view === 'models' ? 'var(--accent-dim)' : 'transparent',
-          border: view === 'models' ? '1px solid rgba(124,106,255,0.2)' : '1px solid transparent',
-          color: view === 'models' ? 'var(--accent-hover)' : 'var(--text-secondary)',
-          fontSize: '13px',
-          fontWeight: 500,
-          cursor: 'pointer',
-          transition: 'all var(--transition)',
-          fontFamily: 'inherit',
-          width: '100%',
-          textAlign: 'left',
-        }}
-      >
-        <span style={{ fontSize: '14px' }}>⬡</span>
-        Models
-      </button>
+      {/* Nav items (Models, dll) */}
+      {NAV_ITEMS.map(item => {
+        const isActive = pathname === item.path;
+        return (
+          <button
+            key={item.path}
+            onClick={() => navigate(isActive ? '/' : item.path)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 12px',
+              borderRadius: 'var(--radius-md)',
+              background: isActive ? 'var(--accent-dim)' : 'transparent',
+              border: isActive ? '1px solid rgba(124,106,255,0.2)' : '1px solid transparent',
+              color: isActive ? 'var(--accent-hover)' : 'var(--text-secondary)',
+              fontSize: '13px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              transition: 'all var(--transition)',
+              fontFamily: 'inherit',
+              width: '100%',
+              textAlign: 'left',
+            }}
+          >
+            <span style={{ fontSize: '14px' }}>{item.icon}</span>
+            {item.label}
+          </button>
+        );
+      })}
 
       {/* Status */}
       <div className="sidebar-status">

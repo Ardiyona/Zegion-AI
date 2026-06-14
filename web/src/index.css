@@ -383,6 +383,124 @@ body {
   border-color: rgba(129, 140, 248, 0.2);
 }
 
+.model-pill {
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border: 1px solid rgba(124, 106, 255, 0.3);
+  letter-spacing: 0.01em;
+}
+
+/* ModelManager buttons */
+.mm-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  font-family: Inter, sans-serif;
+  transition: filter 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+}
+.mm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  filter: none !important;
+}
+.mm-btn-primary {
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border: 1px solid rgba(124,106,255,0.25);
+}
+.mm-btn-primary:hover:not(:disabled) {
+  background: rgba(124,106,255,0.2);
+  border-color: rgba(124,106,255,0.5);
+  box-shadow: 0 0 8px rgba(124,106,255,0.25);
+}
+.mm-btn-danger {
+  background: rgba(248,113,113,0.1);
+  color: #f87171;
+  border: 1px solid rgba(248,113,113,0.25);
+}
+.mm-btn-danger:hover:not(:disabled) {
+  background: rgba(248,113,113,0.2);
+  border-color: rgba(248,113,113,0.5);
+  box-shadow: 0 0 8px rgba(248,113,113,0.2);
+}
+.mm-btn-accent {
+  background: var(--accent);
+  color: white;
+  width: 100%;
+  border: 1px solid transparent;
+}
+.mm-btn-accent:hover:not(:disabled) {
+  filter: brightness(1.15);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.mm-btn-accent:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.mm-btn-cancel {
+  background: rgba(248,113,113,0.1);
+  color: #f87171;
+  border: 1px solid rgba(248,113,113,0.25);
+  font-size: 11px;
+  padding: 4px 10px;
+}
+.mm-btn-cancel:hover:not(:disabled) {
+  background: rgba(248,113,113,0.2);
+  border-color: rgba(248,113,113,0.5);
+}
+.mm-btn-ghost {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.mm-btn-ghost:hover:not(:disabled) {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: rgba(124,106,255,0.3);
+}
+.mm-btn-neutral {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+}
+.mm-btn-neutral:hover:not(:disabled) {
+  border-color: rgba(124,106,255,0.3);
+  color: var(--accent-hover);
+}
+.mm-tab {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid;
+  font-family: Inter, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+.mm-tab:hover {
+  color: var(--accent-hover);
+  border-color: rgba(124,106,255,0.3);
+  background: var(--accent-dim);
+}
+.mm-tab.active {
+  background: var(--accent-dim);
+  color: var(--accent-hover);
+  border-color: rgba(124,106,255,0.3);
+  box-shadow: 0 0 6px rgba(124,106,255,0.15);
+}
+
 /* Messages */
 .messages-container {
   flex: 1;
@@ -617,7 +735,7 @@ body {
 
 .input-wrapper {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
   background: var(--bg-input);
   border: 1px solid var(--border);

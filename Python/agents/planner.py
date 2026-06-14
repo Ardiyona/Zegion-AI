@@ -35,7 +35,7 @@ Setiap langkah harus berisi:
 - RESPOND(message) → jawab langsung ke user (tanpa tool)
 
 === WEB TOOLS ===
-- WEB_SEARCH(query) → cari informasi dari internet jika kamu tidak tahu jawabannya atau butuh data terbaru (harga, berita, error code, dokumentasi, dll)
+- WEB_SEARCH(query) → HANYA untuk data eksternal real-time: harga saham/kripto, berita terkini, cuaca, error code dari internet, dokumentasi library, versi terbaru software. JANGAN gunakan untuk pertanyaan percakapan, identitas, opini, atau hal yang bisa dijawab langsung.
 - FETCH_URL(url) → baca isi halaman web dari URL tertentu (gunakan setelah WEB_SEARCH jika perlu detail lebih lanjut)
 
 === CLICKUP TOOLS (utama — gunakan ini dulu) ===
@@ -55,6 +55,7 @@ Setiap langkah harus berisi:
 ATURAN:
 - Output HANYA JSON array, tanpa penjelasan lain.
 - Untuk tugas coding: analisis dulu → tulis kode → execute → verifikasi.
+- Untuk pertanyaan percakapan, identitas, status, opini, atau penjelasan konsep: gunakan RESPOND langsung, JANGAN WEB_SEARCH.
 - Untuk pertanyaan tentang info terkini / data real-time / error dari internet: gunakan WEB_SEARCH terlebih dulu. Jika perlu membaca detail halaman, lanjutkan dengan FETCH_URL.
 - Untuk ClickUp: gunakan tools UTAMA. TIDAK perlu memanggil LIST_SPACES → LIST_LISTS → LIST_TASKS secara manual.
 - Maksimal 10 langkah.
