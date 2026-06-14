@@ -1,11 +1,11 @@
 from ollama import chat
+from config import DEFAULT_MODEL
 
 
 # =========================
 # CONFIG
 # =========================
 
-CRITIC_MODEL = "qwen3:4b"
 MAX_CRITIC_LOOPS = 2  # Maksimal loop Critic → Executor
 
 CRITIC_PROMPT = """Kamu adalah Critic AI. Tugasmu mengevaluasi apakah hasil eksekusi BENAR dan SESUAI dengan permintaan user.
@@ -50,7 +50,7 @@ def critique(user_request, results, exec_response):
     results_text = _format_results(results)
 
     response = chat(
-        model=CRITIC_MODEL,
+        model=DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": CRITIC_PROMPT},
             {

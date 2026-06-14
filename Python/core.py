@@ -159,9 +159,10 @@ def run_quick(
     task_id: str,
     project_index: str = "",
     conv_id: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
 ) -> str:
     """Quick Mode: Planner → Executor → Responder."""
-    results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id)
+    results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model)
 
     if pop_was_cancelled(conv_id):
         return ""
@@ -169,7 +170,7 @@ def run_quick(
     has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
     if has_tools:
-        final_response = generate_response(user_request, results, conv_id=conv_id)
+        final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
         if pop_was_cancelled(conv_id):
             return ""
     elif exec_response:
@@ -187,6 +188,7 @@ def run_deep(
     task_id: str,
     project_index: str = "",
     conv_id: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
 ) -> str:
     """Deep Mode: Planner → Executor → Critic → Reflection → Responder."""
     results: list[dict] = []
@@ -196,7 +198,7 @@ def run_deep(
         if attempt > 0:
             print(f"\nCritic retry {attempt}/{MAX_CRITIC_RETRIES}...")
 
-        results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id)
+        results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model)
 
         if pop_was_cancelled(conv_id):
             return ""
@@ -226,14 +228,14 @@ def run_deep(
             improve_prompt = f"{user_request}\n\n[REFLECTION]: {suggestions}"
             new_plan, _ = create_plan(improve_prompt, project_index)
             if new_plan:
-                results, exec_response = execute_plan(new_plan, task_id=task_id, conv_id=conv_id)
+                results, exec_response = execute_plan(new_plan, task_id=task_id, conv_id=conv_id, model=model)
                 if pop_was_cancelled(conv_id):
                     return ""
 
     has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
 
     if has_tools:
-        final_response = generate_response(user_request, results, conv_id=conv_id)
+        final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
         if pop_was_cancelled(conv_id):
             return ""
     elif exec_response:
@@ -334,9 +336,9 @@ def handle_message(
     clear_cancel(conv_id)
 
     if mode == MODE_DEEP:
-        final_response = run_deep(clean_input, plan, task_id, project_index, conv_id=conv_id)
+        final_response = run_deep(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model)
     else:
-        final_response = run_quick(clean_input, plan, task_id, project_index, conv_id=conv_id)
+        final_response = run_quick(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model)
 
     # Cancelled — jangan simpan ke DB, hapus user message yang sudah tersimpan
     if pop_was_cancelled(conv_id) or is_cancelled(conv_id) or not final_response:
@@ -360,67 +362,66 @@ def handle_message(
 
 def smart_delete_conversation(conv_id: str) -> dict:
     """
-    Hapus conversation dengan safety check:
-    1. Cek apakah conversation penting (rule-based, cepat)
-    2. Jika penting → AI summarize → simpan ke knowledge base
-    3. Hapus conversation dari DB
+    Hapus conversation dari DB.
+    (AI summarize dinonaktifkan)
     """
-    from db import get_messages as _get_messages
-
     conv = get_conversation(conv_id)
     if not conv:
         return {"deleted": False, "summarized": False, "kb_entry": None,
                 "reason": "Conversation tidak ditemukan"}
 
-    worth_summarizing = is_conversation_worth_summarizing(conv_id)
-    kb_entry = None
-
-    if worth_summarizing:
-        messages = _get_messages(conv_id)
-        conversation_text = "\n".join(
-            f"[{m['role'].upper()}]: {m['content'][:400]}"
-            for m in messages
-            if m["role"] in ("user", "assistant")
-        )
-
-        has_deep = any(m.get("mode_key") == "deep" for m in messages)
-        importance = "high" if has_deep else "medium"
-
-        try:
-            summary = _stream_chat(
-                model=DEFAULT_MODEL,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "Buat ringkasan singkat dari percakapan ini.\n"
-                        "Fokus pada:\n"
-                        "1. Apa yang dikerjakan/diputuskan\n"
-                        "2. File atau konfigurasi yang berubah\n"
-                        "3. Konteks penting yang perlu diingat ke depan\n\n"
-                        "Format: bullet points singkat, maksimal 5 poin.\n"
-                        "Jawab langsung dalam bahasa Indonesia.\n\n"
-                        f"Percakapan:\n{conversation_text[:4000]}"
-                    )
-                }],
-                conv_id=None,  # summarize tidak boleh di-cancel
-            )
-        except Exception as e:
-            summary = f"[Gagal generate summary: {e}]"
-            importance = "low"
-
-        kb_entry = kb_add(
-            content=summary,
-            source_conv_id=conv_id,
-            source_title=conv.get("title", "Unknown"),
-            importance=importance,
-        )
-        print(f"[KB] Saved summary from '{conv.get('title')}' (importance: {importance})")
+    # ── AI Summarize (DISABLED) ──────────────────────────
+    # worth_summarizing = is_conversation_worth_summarizing(conv_id)
+    # kb_entry = None
+    #
+    # if worth_summarizing:
+    #     from db import get_messages as _get_messages
+    #     messages = _get_messages(conv_id)
+    #     conversation_text = "\n".join(
+    #         f"[{m['role'].upper()}]: {m['content'][:400]}"
+    #         for m in messages
+    #         if m["role"] in ("user", "assistant")
+    #     )
+    #
+    #     has_deep = any(m.get("mode_key") == "deep" for m in messages)
+    #     importance = "high" if has_deep else "medium"
+    #
+    #     try:
+    #         summary = _stream_chat(
+    #             model=DEFAULT_MODEL,
+    #             messages=[{
+    #                 "role": "user",
+    #                 "content": (
+    #                     "Buat ringkasan singkat dari percakapan ini.\n"
+    #                     "Fokus pada:\n"
+    #                     "1. Apa yang dikerjakan/diputuskan\n"
+    #                     "2. File atau konfigurasi yang berubah\n"
+    #                     "3. Konteks penting yang perlu diingat ke depan\n\n"
+    #                     "Format: bullet points singkat, maksimal 5 poin.\n"
+    #                     "Jawab langsung dalam bahasa Indonesia.\n\n"
+    #                     f"Percakapan:\n{conversation_text[:4000]}"
+    #                 )
+    #             }],
+    #             conv_id=None,  # summarize tidak boleh di-cancel
+    #         )
+    #     except Exception as e:
+    #         summary = f"[Gagal generate summary: {e}]"
+    #         importance = "low"
+    #
+    #     kb_entry = kb_add(
+    #         content=summary,
+    #         source_conv_id=conv_id,
+    #         source_title=conv.get("title", "Unknown"),
+    #         importance=importance,
+    #     )
+    #     print(f"[KB] Saved summary from '{conv.get('title')}' (importance: {importance})")
+    # ─────────────────────────────────────────────────────
 
     delete_conversation(conv_id)
 
     return {
         "deleted": True,
-        "summarized": worth_summarizing,
-        "kb_entry": kb_entry,
-        "reason": "Summarized & deleted" if worth_summarizing else "Deleted (not worth summarizing)",
+        "summarized": False,
+        "kb_entry": None,
+        "reason": "Deleted",
     }

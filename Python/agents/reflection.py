@@ -1,11 +1,10 @@
 from ollama import chat
+from config import DEFAULT_MODEL
 
 
 # =========================
 # CONFIG
 # =========================
-
-REFLECTION_MODEL = "qwen3:4b"
 
 REFLECTION_PROMPT = """Kamu adalah Reflection AI. Tugasmu mengevaluasi apakah hasil bisa DITINGKATKAN.
 
@@ -53,7 +52,7 @@ def reflect(user_request, results, exec_response):
     results_text = _format_results(results)
 
     response = chat(
-        model=REFLECTION_MODEL,
+        model=DEFAULT_MODEL,
         messages=[
             {"role": "system", "content": REFLECTION_PROMPT},
             {

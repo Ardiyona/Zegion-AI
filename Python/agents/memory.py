@@ -1,4 +1,5 @@
 from ollama import chat
+from config import DEFAULT_MODEL
 
 # =========================
 # CONFIG
@@ -9,9 +10,6 @@ COMPRESS_THRESHOLD = 50
 
 # Jumlah pesan terbaru yang dipertahankan
 KEEP_RECENT = 20
-
-# Model untuk membuat summary
-SUMMARY_MODEL = "qwen3:4b"
 
 
 # =========================
@@ -108,7 +106,7 @@ Percakapan:
 {conversation[:5000]}"""
 
     response = chat(
-        model=SUMMARY_MODEL,
+        model=DEFAULT_MODEL,
         messages=[
             {
                 "role": "user",
