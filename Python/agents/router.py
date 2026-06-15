@@ -88,8 +88,8 @@ def detect_mode(user_input):
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_CHAT
 
-    # Default: short input → chat, long input → quick
-    return MODE_CHAT if len(text) < 80 else MODE_QUICK
+    # Default: chat — unrecognized input is more likely conversational than actionable
+    return MODE_CHAT
 
 
 def parse_override(user_input):
