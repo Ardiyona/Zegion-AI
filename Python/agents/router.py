@@ -1,4 +1,7 @@
+import os
 import re
+
+_CLICKUP_ENABLED = bool(os.getenv("CLICKUP_API_KEY"))
 
 # =========================
 # MODE CONSTANTS
@@ -74,6 +77,9 @@ def detect_mode(user_input):
 
     # Cek QUICK
     for pattern in QUICK_KEYWORDS:
+        # Skip ClickUp patterns if not configured
+        if not _CLICKUP_ENABLED and any(kw in pattern for kw in ["clickup", "task", r"86[a-z0-9]"]):
+            continue
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_QUICK
 
@@ -82,8 +88,8 @@ def detect_mode(user_input):
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_CHAT
 
-    # Default: quick — safer than chat which has no tools
-    return MODE_QUICK
+    # Default: short input → chat, long input → quick
+    return MODE_CHAT if len(text) < 80 else MODE_QUICK
 
 
 def parse_override(user_input):

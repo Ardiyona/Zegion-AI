@@ -1,3 +1,4 @@
+import os
 import re
 import json
 import time
@@ -5,6 +6,8 @@ from ollama import chat
 from config import DEFAULT_MODEL
 from db import kb_get_relevant
 from agents.summarizer import get_global_profile_context
+
+_CLICKUP_ENABLED = bool(os.getenv("CLICKUP_API_KEY"))
 
 
 # =========================
@@ -60,6 +63,12 @@ ATURAN:
 - Nilai params description/name/comment harus COPY PERSIS dari teks user. JANGAN parafrase atau terjemahkan.
 - Maksimal 10 langkah.
 - Akhiri dengan RESPOND untuk konfirmasi ke user."""
+
+# Planner prompt tanpa ClickUp — dipakai otomatis kalau CLICKUP_API_KEY tidak diset
+_PLANNER_BASE_NO_CLICKUP = "\n".join(
+    line for line in PLANNER_BASE.splitlines()
+    if "CLICKUP" not in line.upper() and "clickup" not in line.lower()
+)
 
 
 # =========================
@@ -126,6 +135,11 @@ Contoh output untuk "cari solusi error 0x80070005 windows":
 
 _ALL_EXAMPLES = "\n\n".join(INTENT_EXAMPLES.values())
 
+_NON_CLICKUP_EXAMPLES = "\n\n".join(
+    v for k, v in INTENT_EXAMPLES.items()
+    if not k.startswith("clickup")
+)
+
 
 # =========================
 # INTENT PATTERNS
@@ -181,8 +195,18 @@ def _detect_intent(user_message):
 
 def build_prompt(user_message):
     intent = _detect_intent(user_message)
-    examples = INTENT_EXAMPLES.get(intent, _ALL_EXAMPLES) if intent else _ALL_EXAMPLES
-    return f"{PLANNER_BASE}\n\n{examples}", intent
+
+    # Strip ClickUp intents if not configured
+    if not _CLICKUP_ENABLED and intent and intent.startswith("clickup"):
+        intent = None
+
+    if intent:
+        examples = INTENT_EXAMPLES.get(intent, _ALL_EXAMPLES if _CLICKUP_ENABLED else _NON_CLICKUP_EXAMPLES)
+    else:
+        examples = _ALL_EXAMPLES if _CLICKUP_ENABLED else _NON_CLICKUP_EXAMPLES
+
+    base = PLANNER_BASE if _CLICKUP_ENABLED else _PLANNER_BASE_NO_CLICKUP
+    return f"{base}\n\n{examples}", intent
 
 
 # =========================
