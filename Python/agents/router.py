@@ -38,6 +38,10 @@ QUICK_KEYWORDS = [
     r"clickup", r"lihat\s+task", r"buat\s+task", r"update\s+task",
     r"list\s+task", r"task\s+saya", r"space\s+clickup",
     r"sprint", r"backlog", r"comment\s+task",
+    r"detail\s+task", r"lihat\s+detail", r"task\s+id",
+    r"isi\s+.*task", r"ubah\s+.*task", r"ganti\s+.*task",
+    r"tambah\s+komentar", r"status\s+task", r"prioritas\s+task",
+    r"\b86[a-z0-9]{7,9}\b",  # ClickUp task ID pattern (e.g. 86exy7d21)
 ]
 
 # Keyword yang menandakan chat biasa (CHAT)
@@ -78,11 +82,8 @@ def detect_mode(user_input):
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_CHAT
 
-    # Default: kalau pendek → chat, kalau panjang → quick
-    if len(text) < 80:
-        return MODE_CHAT
-    else:
-        return MODE_QUICK
+    # Default: quick — safer than chat which has no tools
+    return MODE_QUICK
 
 
 def parse_override(user_input):

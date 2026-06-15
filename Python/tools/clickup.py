@@ -374,9 +374,21 @@ def clickup_smart_update_task(task_id, status=None, priority=None, name=None, de
     if str(task_data.get("team_id", "")) != str(CLICKUP_WORKSPACE_ID):
         return "Error: Task ini bukan milik workspace yang dikonfigurasi."
 
+    _STATUS_ALIASES = {
+        "todo": "to do",
+        "in progress": "in progress",
+        "inprogress": "in progress",
+        "in-progress": "in progress",
+        "done": "complete",
+        "complete": "complete",
+        "completed": "complete",
+        "closed": "complete",
+        "open": "to do",
+    }
+
     payload = {}
     if status:
-        payload["status"] = status
+        payload["status"] = _STATUS_ALIASES.get(status.lower().strip(), status)
     if priority:
         priority_map = {"urgent": 1, "high": 2, "normal": 3, "low": 4}
         payload["priority"] = priority_map.get(priority.lower(), 3)
