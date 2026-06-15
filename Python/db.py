@@ -448,6 +448,69 @@ def kb_get_context(max_entries=10):
     return "\n".join(lines)
 
 
+def kb_get_relevant(user_input: str, max_entries: int = 5) -> str:
+    """
+    Ambil KB entries yang relevan dengan user_input.
+    Filter string-based (no model call):
+    - Prioritaskan entry yang mengandung task ID dari user_input
+    - Fallback ke keyword overlap (token >= 4 char)
+    - Cap max_entries agar tidak bloat prompt
+    Returns formatted string siap inject, atau "" jika tidak ada.
+    """
+    import re as _re
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """SELECT content, importance, is_corrected
+               FROM knowledge_base
+               ORDER BY
+                   is_corrected DESC,
+                   CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                   updated_at DESC
+               LIMIT 100"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return ""
+
+    # Extract task IDs and keywords from user_input
+    task_ids = set(_re.findall(r'\b86[a-z0-9]{5,}\b', user_input, _re.IGNORECASE))
+    keywords = {w.lower() for w in _re.findall(r'\b\w{4,}\b', user_input.lower())
+                if w.lower() not in {'yang', 'dengan', 'untuk', 'pada', 'dari', 'task', 'ini', 'itu'}}
+
+    scored = []
+    for row in rows:
+        content_lower = row["content"].lower()
+        score = 0
+        # Task ID match is highest signal
+        for tid in task_ids:
+            if tid.lower() in content_lower:
+                score += 10
+        # Keyword overlap
+        for kw in keywords:
+            if kw in content_lower:
+                score += 1
+        if score > 0:
+            scored.append((score, row))
+
+    # Sort by score desc, take top max_entries
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [row for _, row in scored[:max_entries]]
+
+    if not top:
+        return ""
+
+    lines = ["[RELEVANT KNOWLEDGE]"]
+    for row in top:
+        marker = "[VERIFIED] " if row["is_corrected"] else ""
+        lines.append(f"- {marker}{row['content']}")
+    lines.append("[/RELEVANT KNOWLEDGE]")
+
+    return "\n".join(lines)
+
+
 # =========================
 # SMART DELETE HELPER
 # =========================

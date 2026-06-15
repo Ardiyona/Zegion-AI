@@ -10,6 +10,7 @@ import re
 from typing import Optional
 
 from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS
+from agents.summarizer import trigger_executor_success, trigger_message_count, trigger_on_close
 
 from config import (
     AGENT_NAME,
@@ -250,6 +251,7 @@ def run_quick(
     results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
     if conv_id:
         update_session_context(conv_id, results)
+        trigger_executor_success(conv_id, results)
 
     if pop_was_cancelled(conv_id):
         return ""
@@ -292,6 +294,7 @@ def run_deep(
         results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
         if conv_id:
             update_session_context(conv_id, results)
+            trigger_executor_success(conv_id, results)
 
         if pop_was_cancelled(conv_id):
             return ""
@@ -449,6 +452,7 @@ def handle_message(
         conv_id, "assistant", final_response,
         mode=mode_name, mode_key=mode, plan=plan
     )
+    trigger_message_count(conv_id)
 
     cleanup_completed()
     return final_response, conv_id, mode, plan
@@ -515,11 +519,12 @@ def smart_delete_conversation(conv_id: str) -> dict:
     #     print(f"[KB] Saved summary from '{conv.get('title')}' (importance: {importance})")
     # ─────────────────────────────────────────────────────
 
+    trigger_on_close(conv_id)
     delete_conversation(conv_id)
 
     return {
         "deleted": True,
-        "summarized": False,
+        "summarized": True,
         "kb_entry": None,
         "reason": "Deleted",
     }
