@@ -55,6 +55,7 @@ ATURAN:
 5. WRITE_FILE dan EXECUTE HANYA jika user meminta membuat/menulis file atau menjalankan kode.
 6. CLICKUP_UPDATE_TASK: HANYA sertakan field yang user minta. Jangan ubah status/priority/name/description jika user tidak meminta.
 7. Jika tool gagal/error, coba pendekatan LAIN. Jika 2x gagal, tulis [DONE] dengan penjelasan error.
+8. COPY VERBATIM: nilai description/name/comment harus COPY PERSIS dari teks user. JANGAN parafrase, terjemahkan, atau ringkas.
 
 FORMAT TOOL:
 [READ_FILE path="file.py"]
@@ -81,8 +82,10 @@ CONTOH BENAR:
 User: "list task saya" → [CLICKUP_GET_TASKS] → (terima hasil) → [DONE] Berikut task Anda: ...
 User: "baca file main.py" → [READ_FILE path="main.py"] → (terima isi) → [DONE] Isi file main.py: ...
 User: "cari info bitcoin" → [WEB_SEARCH query="harga bitcoin"] → (terima hasil) → [DONE] Harga bitcoin saat ini: ...
-User: "tambah deskripsi task X" → [CLICKUP_UPDATE_TASK task_id="X" description="..."] → [DONE]
-User: "ubah status task X jadi done" → [CLICKUP_UPDATE_TASK task_id="X" status="done"] → [DONE]
+User: "isi deskripsi task 86abc menjadi 'Fix login bug on mobile'" → [CLICKUP_UPDATE_TASK task_id="86abc" description="Fix login bug on mobile"] → (terima hasil) → [DONE] Deskripsi berhasil diisi.
+PENTING: description= harus COPY PERSIS teks user. "Fix login bug on mobile" bukan "Perbaiki bug login di mobile".
+User: "ubah nama task X menjadi 'nama baru'" → [CLICKUP_UPDATE_TASK task_id="X" name="nama baru"] → (terima hasil) → [DONE] Nama task berhasil diubah.
+User: "ubah status task X jadi done" → [CLICKUP_UPDATE_TASK task_id="X" status="done"] → (terima hasil) → [DONE] Status berhasil diubah.
 """
 
 
@@ -221,6 +224,50 @@ def _find_last(pattern: str, text: str, flags=0):
     """Cari match TERAKHIR dari pattern di text (bukan pertama)."""
     matches = list(re.finditer(pattern, text, flags))
     return matches[-1] if matches else None
+
+
+def _extract_verbatim_content(user_request: str) -> dict:
+    """
+    Extract verbatim content values from user request to prevent model paraphrasing.
+
+    Looks for patterns like:
+      - menjadi "..." / menjadi '...'
+      - dengan deskripsi "..."
+      - komentar "..."
+      - named field: description="...", name="..."
+
+    Returns dict with keys: description, name, comment (only those found).
+    """
+    result = {}
+
+    # Match quoted content — handles straight quotes, curly quotes, and single quotes
+    # Tries longest match first: “...”, ‘...’, “...”, ‘...’
+    quoted = re.findall(r'"([^"]+)"', user_request)
+
+    req_lower = user_request.lower()
+
+    if quoted:
+        last_quoted = quoted[-1].strip()
+
+        if any(kw in req_lower for kw in ['deskripsi', 'description', 'desc', 'keterangan']):
+            result['description'] = last_quoted
+
+        if any(kw in req_lower for kw in ['nama', 'judul', 'title', 'rename']):
+            result['name'] = last_quoted
+
+        if any(kw in req_lower for kw in ['komentar', 'comment', 'komen']):
+            result['comment'] = last_quoted
+
+    return result
+
+
+def _first_tool_only(ai_response: str) -> str:
+    """
+    When model emits multiple tool calls in one response, keep only the first.
+    Prevents GET_TASK_DETAIL from blocking UPDATE_TASK when both appear together.
+    """
+    m = re.search(r'\[[A-Z_]+(?:\s[^\]]+)?\](?:[\s\S]*?\[/\w+\])?', ai_response)
+    return ai_response[:m.end()] if m else ai_response
 
 
 def _handle_tools(
@@ -537,34 +584,50 @@ def execute_plan(
         # Tool parsing hanya setelah stream SELESAI penuh — tidak pada partial buffer
         if "[DONE]" in ai:
             done_idx = ai.index("[DONE]")
-            final_response = ai[done_idx + 6:].strip()
-        
-            # If [DONE] is empty, synthesize from tool results
-            if not final_response and results:
-                success_results = [
-                    r for r in results
-                    if not str(r.get("result", "")).startswith("Error")
-                    and r.get("action") not in ("RESPOND", "DONE")
-                ]
-                if success_results:
-                    parts = []
-                    for r in success_results[-3:]:  # last 3 successful results
-                        action = r.get("action", "")
-                        result = str(r.get("result", ""))[:300]
-                        target = r.get("target", "")
-                        parts.append(f"[{action}] {target}: {result}")
-                    final_response = "\n".join(parts)
-                    print(f"    \u26a0\ufe0f  Empty [DONE] — synthesized response from {len(success_results)} tool results")
-        
-            print(f"    \u2705 DONE: {final_response[:2000]}{'...' if len(final_response) > 2000 else ''}")
-            if task_id:
-                update_task_step(task_id, step, {
-                    "step": step + 1, "action": "DONE", "result": final_response,
-                })
-            break
+            pre_done = ai[:done_idx].strip()
+
+            # If model emitted a tool call BEFORE [DONE] in same response, execute the tool
+            # first and let the next iteration generate [DONE] with the result.
+            _tool_pattern = re.compile(r"\[[A-Z_]+(?:\s[^\]]+)?\]")
+            if pre_done and _tool_pattern.search(pre_done):
+                ai = pre_done  # drop [DONE], fall through to normal tool handling below
+                print(f"    ⚠️  Tool+DONE in same response — executing tool first, deferring DONE")
+            else:
+                final_response = ai[done_idx + 6:].strip()
+
+                # If [DONE] is empty, synthesize from tool results
+                if not final_response and results:
+                    success_results = [
+                        r for r in results
+                        if not str(r.get("result", "")).startswith("Error")
+                        and r.get("action") not in ("RESPOND", "DONE")
+                    ]
+                    if success_results:
+                        parts = []
+                        for r in success_results[-3:]:  # last 3 successful results
+                            action = r.get("action", "")
+                            result = str(r.get("result", ""))[:300]
+                            target = r.get("target", "")
+                            parts.append(f"[{action}] {target}: {result}")
+                        final_response = "\n".join(parts)
+                        print(f"    ⚠️  Empty [DONE] — synthesized response from {len(success_results)} tool results")
+
+                print(f"    ✅ DONE: {final_response[:2000]}{'...' if len(final_response) > 2000 else ''}")
+                if task_id:
+                    update_task_step(task_id, step, {
+                        "step": step + 1, "action": "DONE", "result": final_response,
+                    })
+                break
+
 
         # ── PRE-PARSE: detect intended tool BEFORE executing ──
-        exec_text = ai  # may be modified by guards below
+        # Keep only the first tool call — prevents GET_TASK_DETAIL from looping
+        # when model emits multiple tool calls in one response
+        exec_text = _first_tool_only(ai)
+
+        # ── VERBATIM OVERRIDE: extract quoted content from user request ──
+        # Prevents small models from paraphrasing description/name/comment values
+        verbatim = _extract_verbatim_content(user_request)
 
         # ── FIELD MUTATION GUARD: strip unintended params from CLICKUP_UPDATE_TASK ──
         update_match = _find_last(
@@ -576,6 +639,17 @@ def execute_plan(
             ai_priority = update_match.group(3)
             ai_name = update_match.group(4)
             ai_description = update_match.group(5)
+
+            # Override model values with verbatim content from user request
+            if 'description' in verbatim and ai_description is not None:
+                if ai_description != verbatim['description']:
+                    print(f"    ✏️  VERBATIM OVERRIDE description: '{ai_description}' → '{verbatim['description']}'")
+                ai_description = verbatim['description']
+            if 'name' in verbatim and ai_name is not None:
+                if ai_name != verbatim['name']:
+                    print(f"    ✏️  VERBATIM OVERRIDE name: '{ai_name}' → '{verbatim['name']}'")
+                ai_name = verbatim['name']
+
             included_fields = {k for k, v in {
                 'status': ai_status, 'priority': ai_priority,
                 'name': ai_name, 'description': ai_description,
@@ -639,6 +713,31 @@ def execute_plan(
                         consecutive_errors = 0
                         exec_messages.append({"role": "user", "content": tool_result})
                     continue  # Skip normal _handle_tools flow
+
+        # ── VERBATIM INJECT: rewrite quoted values in exec_text before tool execution ──
+        if verbatim:
+            def _rewrite_param(m_obj, field, override_val):
+                original = m_obj.group(0)
+                return re.sub(
+                    rf'({field}=")[^"]*(")',
+                    rf'\g<1>{re.escape(override_val)}\2',
+                    original,
+                )
+
+            def _inject_verbatim(text):
+                def replacer(m):
+                    out = m.group(0)
+                    for field, val in verbatim.items():
+                        if f'{field}="' in out:
+                            out = re.sub(rf'({field}=")[^"]*(")', rf'\g<1>{val}\2', out)
+                            print(f"    ✏️  VERBATIM INJECT {field}: verbatim from user request")
+                    return out
+                return re.sub(
+                    r'\[CLICKUP_(?:UPDATE_TASK|CREATE_TASK|ADD_COMMENT)[^\]]*\]',
+                    replacer, text
+                )
+
+            exec_text = _inject_verbatim(exec_text)
 
         # ── Now execute with (possibly cleaned) text ──
         tool_used, tool_name, tool_target, tool_result = _handle_tools(exec_text)
@@ -712,7 +811,7 @@ def execute_plan(
             # Check if all planned actions are done → hint model to write [DONE]
             done_actions = [r.get("action", "").upper() for r in results]
             if plan_actions and all(a in done_actions for a in plan_actions):
-                exec_messages.append({"role": "user", "content": "Semua langkah rencana sudah selesai. Tulis [DONE] diikuti ringkasan hasil."})
+                exec_messages.append({"role": "user", "content": "Semua langkah rencana sudah selesai. Tulis [DONE] diikuti konfirmasi singkat hasil akhir saja. JANGAN ceritakan langkah-langkah yang sudah dikerjakan."})
                 plan_actions = []  # prevent re-triggering
         else:
             print(f"    💭 (no tool used, asking AI to continue)")

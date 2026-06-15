@@ -6,6 +6,7 @@ Storage: SQLite via db.py
 
 import logging
 import os
+import re
 from typing import Optional
 
 from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS
@@ -72,6 +73,63 @@ from db import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =========================
+# SESSION CONTEXT
+# Tracks last tool-touched entity per conv_id — in-memory, resets on restart.
+# Used to resolve references like "task yang tadi", "kembalikan yang itu", etc.
+# =========================
+
+_session_context: dict[str, dict] = {}
+
+
+def get_session_context(conv_id: str) -> dict:
+    return _session_context.get(conv_id, {})
+
+
+def update_session_context(conv_id: str, results: list[dict]) -> None:
+    """Extract last touched entity from executor results and store per conv_id."""
+    for r in reversed(results):
+        action = r.get("action", "")
+        target = r.get("target", "")
+        if not target:
+            continue
+        if "CLICKUP" in action and target:
+            _session_context[conv_id] = {
+                "task_id": target,
+                "action": action,
+                "source": "clickup",
+            }
+            return
+
+
+def _inject_session_context(user_input: str, conv_id: str) -> str:
+    """
+    If user refers to a previous entity without an ID, inject the last known
+    context so the planner and executor can resolve it.
+    """
+    ctx = get_session_context(conv_id)
+    if not ctx:
+        return user_input
+
+    ref_keywords = [
+        "sebelumnya", "tadi", "yang itu", "yang tadi", "yang sama",
+        "itu", "tersebut", "barusan", "previously", "that task", "the task",
+    ]
+    inp_lower = user_input.lower()
+
+    # Only inject if user refers to something without already specifying an ID
+    has_id = bool(re.search(r'\b86[a-z0-9]{5,}\b', user_input, re.IGNORECASE))
+    has_ref = any(kw in inp_lower for kw in ref_keywords)
+
+    if has_ref and not has_id and ctx.get("task_id"):
+        task_id = ctx["task_id"]
+        injected = f"{user_input} (task id: {task_id})"
+        logger.info("[session_context] injected task_id=%s into: %s", task_id, user_input[:60])
+        return injected
+
+    return user_input
 
 
 # =========================
@@ -190,6 +248,8 @@ def run_quick(
 ) -> str:
     """Quick Mode: Planner → Executor → (Responder jika perlu)."""
     results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
+    if conv_id:
+        update_session_context(conv_id, results)
 
     if pop_was_cancelled(conv_id):
         return ""
@@ -230,6 +290,8 @@ def run_deep(
             print(f"\nCritic retry {attempt}/{MAX_CRITIC_RETRIES}...")
 
         results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
+        if conv_id:
+            update_session_context(conv_id, results)
 
         if pop_was_cancelled(conv_id):
             return ""
@@ -358,7 +420,8 @@ def handle_message(
         return final_response, conv_id, mode, plan
 
     # ── AGENT MODE (QUICK / DEEP) ─────────────────────
-    plan_result, raw_plan = create_plan(clean_input, project_index, model=model)
+    plan_input = _inject_session_context(clean_input, conv_id)
+    plan_result, raw_plan = create_plan(plan_input, project_index, model=model)
 
     if not plan_result:
         add_message(conv_id, "assistant", raw_plan, mode_key=mode)

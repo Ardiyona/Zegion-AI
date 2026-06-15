@@ -335,7 +335,7 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
             if not user_input:
                 continue
 
-            print(f"[WS] [{conv_id[:8]}] User: {user_input[:60]}")
+            print(f"[WS] [{conv_id[:8]}] User: {user_input[:120]}")
 
             await websocket.send_json({"type": "thinking"})
 

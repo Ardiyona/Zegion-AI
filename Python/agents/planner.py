@@ -1,3 +1,4 @@
+import re
 import json
 import time
 from ollama import chat
@@ -5,15 +6,11 @@ from config import DEFAULT_MODEL
 
 
 # =========================
-# CONFIG
+# PLANNER BASE PROMPT
+# Tool definitions + rules only — no examples
 # =========================
 
-
-# =========================
-# PLANNER PROMPT
-# =========================
-
-PLANNER_PROMPT = """Kamu adalah Planner AI. Tugasmu HANYA membuat rencana langkah-langkah, BUKAN mengerjakan.
+PLANNER_BASE = """Kamu adalah Planner AI. Tugasmu HANYA membuat rencana langkah-langkah, BUKAN mengerjakan.
 
 Berdasarkan permintaan user, buat daftar langkah (task list) dalam format JSON array.
 
@@ -58,9 +55,60 @@ ATURAN:
 - Untuk pertanyaan percakapan, identitas, status, opini, atau penjelasan konsep: gunakan RESPOND langsung, JANGAN WEB_SEARCH.
 - Untuk pertanyaan tentang info terkini / data real-time / error dari internet: gunakan WEB_SEARCH terlebih dulu. Jika perlu membaca detail halaman, lanjutkan dengan FETCH_URL.
 - Untuk ClickUp: gunakan tools UTAMA. TIDAK perlu memanggil LIST_SPACES → LIST_LISTS → LIST_TASKS secara manual.
+- Nilai params description/name/comment harus COPY PERSIS dari teks user. JANGAN parafrase atau terjemahkan.
 - Maksimal 10 langkah.
-- Akhiri dengan RESPOND untuk konfirmasi ke user.
+- Akhiri dengan RESPOND untuk konfirmasi ke user."""
 
+
+# =========================
+# INTENT EXAMPLES
+# 1-2 focused few-shot examples per intent
+# Injected only when intent is detected — keeps prompt short for small models
+# =========================
+
+INTENT_EXAMPLES = {
+    "clickup_update": """\
+Contoh output untuk "isi deskripsi task id abc123 menjadi 'Refactor auth module'":
+[
+  {"step": 1, "action": "CLICKUP_UPDATE_TASK", "params": {"task_id": "abc123", "description": "Refactor auth module"}, "reason": "Update deskripsi task"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Deskripsi task berhasil diperbarui."}, "reason": "Konfirmasi"}
+]
+
+Contoh output untuk "ubah status task 86xyz99 menjadi done":
+[
+  {"step": 1, "action": "CLICKUP_UPDATE_TASK", "params": {"task_id": "86xyz99", "status": "done"}, "reason": "Update status task"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Status task berhasil diubah."}, "reason": "Konfirmasi"}
+]""",
+
+    "clickup_comment": """\
+Contoh output untuk "tambah komentar di task 86abc12: sudah selesai review":
+[
+  {"step": 1, "action": "CLICKUP_ADD_COMMENT", "params": {"task_id": "86abc12", "comment": "sudah selesai review"}, "reason": "Tambah komentar pada task"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Komentar berhasil ditambahkan."}, "reason": "Konfirmasi"}
+]""",
+
+    "clickup_create": """\
+Contoh output untuk "buat task Fix Login di list Development":
+[
+  {"step": 1, "action": "CLICKUP_CREATE_TASK", "params": {"list_name": "Development", "name": "Fix Login", "priority": "high"}, "reason": "Buat task baru"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Task berhasil dibuat."}, "reason": "Konfirmasi"}
+]""",
+
+    "clickup_detail": """\
+Contoh output untuk "lihat detail task 86abc12":
+[
+  {"step": 1, "action": "CLICKUP_GET_TASK_DETAIL", "params": {"task_id": "86abc12"}, "reason": "Ambil detail lengkap task"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Berikut detail task."}, "reason": "Konfirmasi"}
+]""",
+
+    "clickup_get": """\
+Contoh output untuk "lihat task saya":
+[
+  {"step": 1, "action": "CLICKUP_GET_TASKS", "params": {}, "reason": "Ambil semua task dari workspace"},
+  {"step": 2, "action": "RESPOND", "params": {"message": "Berikut task Anda."}, "reason": "Konfirmasi"}
+]""",
+
+    "web_search": """\
 Contoh output untuk "berapa harga bitcoin hari ini":
 [
   {"step": 1, "action": "WEB_SEARCH", "params": {"query": "harga bitcoin hari ini"}, "reason": "Cari data harga terkini dari internet"},
@@ -71,20 +119,73 @@ Contoh output untuk "cari solusi error 0x80070005 windows":
 [
   {"step": 1, "action": "WEB_SEARCH", "params": {"query": "error code 0x80070005 windows solution"}, "reason": "Cari solusi dari internet"},
   {"step": 2, "action": "RESPOND", "params": {"message": "Berikut solusi yang ditemukan."}, "reason": "Konfirmasi ke user"}
+]""",
+}
+
+_ALL_EXAMPLES = "\n\n".join(INTENT_EXAMPLES.values())
+
+
+# =========================
+# INTENT PATTERNS
+# Ordered most-specific first to avoid false positives
+# verb + entity must BOTH match
+# =========================
+
+INTENT_PATTERNS = [
+    {
+        "intent": "clickup_update",
+        "verbs":    ["ubah", "update", "isi", "ganti", "edit", "set", "rename", "tandai", "selesaikan", "complete", "finish", "tambah", "tambahkan", "add"],
+        "entities": ["task", "deskripsi", "status", "prioritas", "nama", "judul", "title", "selesai", "done"],
+    },
+    # comment before create — both share verb "tambah"; entity "komentar/comment" is unambiguous
+    {
+        "intent": "clickup_comment",
+        "verbs":    ["tambah", "tulis", "kirim", "add"],
+        "entities": ["komentar", "comment"],
+    },
+    {
+        "intent": "clickup_create",
+        "verbs":    ["buat", "tambah", "bikin", "create", "add"],
+        "entities": ["task"],
+    },
+    # detail before get — "lihat detail task" must match detail, not get
+    {
+        "intent": "clickup_detail",
+        "verbs":    ["lihat", "cek", "tampilkan", "info", "detail", "show"],
+        "entities": ["detail"],
+    },
+    {
+        "intent": "clickup_get",
+        "verbs":    ["lihat", "tampilkan", "list", "cek", "ambil", "show", "get"],
+        "entities": ["task"],
+    },
+    {
+        "intent": "web_search",
+        "verbs":    ["cari", "carikan", "search", "cek"],
+        "entities": ["harga", "berita", "cuaca", "error", "dokumentasi", "versi", "terbaru", "hari ini"],
+    },
 ]
 
-Contoh output untuk "lihat task saya":
-[
-  {"step": 1, "action": "CLICKUP_GET_TASKS", "params": {}, "reason": "Ambil semua task dari workspace"},
-  {"step": 2, "action": "RESPOND", "params": {"message": "Berikut task Anda."}, "reason": "Konfirmasi"}
-]
 
-Contoh output untuk "buat task Fix Login di list Development":
-[
-  {"step": 1, "action": "CLICKUP_CREATE_TASK", "params": {"list_name": "Development", "name": "Fix Login", "priority": "high"}, "reason": "Buat task baru"},
-  {"step": 2, "action": "RESPOND", "params": {"message": "Task berhasil dibuat."}, "reason": "Konfirmasi"}
-]
-"""
+def _detect_intent(user_message):
+    msg = user_message.lower()
+    for pattern in INTENT_PATTERNS:
+        verb_hit   = any(v in msg for v in pattern["verbs"])
+        entity_hit = any(e in msg for e in pattern["entities"])
+        if verb_hit and entity_hit:
+            return pattern["intent"]
+    return None
+
+
+def build_prompt(user_message):
+    intent = _detect_intent(user_message)
+    examples = INTENT_EXAMPLES.get(intent, _ALL_EXAMPLES) if intent else _ALL_EXAMPLES
+    return f"{PLANNER_BASE}\n\n{examples}", intent
+
+
+# =========================
+# PLAN CREATION
+# =========================
 
 
 def create_plan(user_message, project_index="", model=None):
@@ -97,8 +198,10 @@ def create_plan(user_message, project_index="", model=None):
     if project_index:
         context = f"\n\nKonteks project saat ini:\n{project_index}\n"
 
+    system_prompt, intent = build_prompt(user_message)
+
     messages = [
-        {"role": "system", "content": PLANNER_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"{user_message}{context}"}
     ]
 
@@ -122,6 +225,7 @@ def create_plan(user_message, project_index="", model=None):
     tps = eval_count / gen_s if gen_s > 0 else 0
 
     print(f"\n  [PLANNER]")
+    print(f"  Intent: {intent or 'fallback'}")
     print(f"  Model: {plan_model}")
     print(f"  Prompt chars: {prompt_chars:,}")
     print(f"  Prompt tokens: {p_eval_count:,}")
@@ -138,8 +242,6 @@ def create_plan(user_message, project_index="", model=None):
 
 def _extract_json(text):
     """Ekstrak JSON array dari teks AI."""
-    import re
-
     try:
         result = json.loads(text)
         if isinstance(result, list):
