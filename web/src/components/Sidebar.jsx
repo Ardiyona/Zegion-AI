@@ -47,6 +47,7 @@ function ConversationItem({ conv, isActive, onSelect, onDelete }) {
 
 const NAV_ITEMS = [
   { path: '/models', icon: '⬡', label: 'Models' },
+  { path: '/settings', icon: '⚙', label: 'Settings' },
 ];
 
 export function Sidebar({

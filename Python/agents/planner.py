@@ -220,24 +220,23 @@ def create_plan(user_message, project_index="", model=None):
     Return: (plan, raw)
     """
     plan_model = model or DEFAULT_MODEL
+    system_prompt, intent = build_prompt(user_message)
+
     context = ""
     if project_index:
         context = f"\n\nKonteks project saat ini:\n{project_index}\n"
 
-    # Only inject KB when ClickUp intent detected — KB entries are ClickUp-heavy
-    # and would cause hallucinations on non-ClickUp messages
-    if intent and intent.startswith("clickup"):
+    # Inject per-conversation summaries relevan untuk semua intent
+    if intent:
         kb_context = kb_get_relevant(user_message, max_entries=3)
         if kb_context:
             context += f"\n\n{kb_context}\n"
 
-    # Only inject global profile for agent intents, not pure RESPOND paths
+    # Inject global profile untuk semua intent
     if intent:
         global_profile = get_global_profile_context()
         if global_profile:
             context += f"\n\n{global_profile}\n"
-
-    system_prompt, intent = build_prompt(user_message)
 
     messages = [
         {"role": "system", "content": system_prompt},

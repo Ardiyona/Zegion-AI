@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import threading
+import time
 from typing import Optional
 
 from ollama import chat as _ollama_chat
@@ -37,6 +38,28 @@ _SIGNIFICANT_TOOLS = {
 
 # Track per-conv last-summarized message count to avoid redundant summaries
 _last_summarized: dict[str, int] = {}
+
+# Semaphore: hanya 1 summarization boleh jalan sekaligus
+_summary_semaphore = threading.Semaphore(1)
+
+# Flag: sedang ada request user aktif — summarizer defer sampai selesai
+_active_request = threading.Event()
+
+
+def mark_request_start() -> None:
+    """Panggil saat request user mulai diproses."""
+    _active_request.set()
+
+
+def mark_request_done() -> None:
+    """Panggil saat request user selesai."""
+    _active_request.clear()
+
+# Track whether a conv has ever used an agent tool (QUICK/DEEP)
+_has_used_agent_tool: dict[str, bool] = {}
+
+_MESSAGE_THRESHOLD_WITH_TOOLS = 5
+_MESSAGE_THRESHOLD_CHAT_ONLY  = 20
 
 _SUMMARY_SYSTEM_PROMPT = """You are a conversation summarizer. Output ONLY valid JSON. No explanation, no markdown.
 
@@ -133,16 +156,39 @@ def _get_message_count(conv_id: str) -> int:
     return len(get_messages(conv_id))
 
 
+def mark_agent_tool_used(conv_id: str) -> None:
+    """Flag bahwa conversation ini pernah pakai agent tool (QUICK/DEEP)."""
+    _has_used_agent_tool[conv_id] = True
+
+
 def _should_summarize_by_count(conv_id: str) -> bool:
-    """Return True if conversation has grown by 5+ messages since last summary."""
+    """Dual threshold: 5 pesan kalau pernah pakai agent tool, 20 kalau pure chat."""
     current = _get_message_count(conv_id)
     last = _last_summarized.get(conv_id, 0)
-    return (current - last) >= 5
+    has_tools = _has_used_agent_tool.get(conv_id, False)
+    threshold = _MESSAGE_THRESHOLD_WITH_TOOLS if has_tools else _MESSAGE_THRESHOLD_CHAT_ONLY
+    return (current - last) >= threshold
 
 
 # =========================
 # PUBLIC TRIGGER API
 # =========================
+
+def _deferred_summary(conv_id: str, reason: str) -> None:
+    """Tunggu sampai tidak ada request aktif, lalu run summary dengan semaphore."""
+    # Tunggu request user selesai dulu (max 60s)
+    deadline = time.time() + 60
+    while _active_request.is_set() and time.time() < deadline:
+        time.sleep(0.5)
+
+    if not _summary_semaphore.acquire(blocking=False):
+        logger.info("[summarizer] skipped (another summary running): %s", reason)
+        return
+    try:
+        _run_summary(conv_id, reason)
+    finally:
+        _summary_semaphore.release()
+
 
 def trigger_executor_success(conv_id: str, results: list[dict]) -> None:
     """Call after executor completes — runs async if significant tool was used."""
@@ -152,7 +198,7 @@ def trigger_executor_success(conv_id: str, results: list[dict]) -> None:
     if not used_tools.intersection(_SIGNIFICANT_TOOLS):
         return
     threading.Thread(
-        target=_run_summary, args=(conv_id, "executor_success"), daemon=True
+        target=_deferred_summary, args=(conv_id, "executor_success"), daemon=True
     ).start()
 
 
@@ -162,7 +208,7 @@ def trigger_message_count(conv_id: str) -> None:
         return
     if _should_summarize_by_count(conv_id):
         threading.Thread(
-            target=_run_summary, args=(conv_id, "message_count"), daemon=True
+            target=_deferred_summary, args=(conv_id, "message_count"), daemon=True
         ).start()
 
 
@@ -171,7 +217,7 @@ def trigger_on_close(conv_id: str) -> None:
     if not conv_id:
         return
     threading.Thread(
-        target=_run_summary, args=(conv_id, "on_close"), daemon=True
+        target=_deferred_summary, args=(conv_id, "on_close"), daemon=True
     ).start()
 
 
@@ -279,6 +325,17 @@ def _update_global_user_profile(user_info: list[str]) -> None:
     profile["long_term_context"] = ltc
     _save_global_profile(profile)
     logger.info("[summarizer] global user profile updated")
+
+
+def reset_global_profile() -> bool:
+    """Hapus global user profile dari KB. Return True jika ada yang dihapus."""
+    from db import kb_delete
+    entries = [e for e in kb_list(limit=500) if e.get("source_title") == _GLOBAL_PROFILE_KEY]
+    if not entries:
+        return False
+    kb_delete(entries[0]["id"])
+    logger.info("[summarizer] global user profile reset")
+    return True
 
 
 def get_global_profile_context() -> str:

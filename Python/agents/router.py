@@ -78,7 +78,7 @@ def detect_mode(user_input):
     # Cek QUICK
     for pattern in QUICK_KEYWORDS:
         # Skip ClickUp patterns if not configured
-        if not _CLICKUP_ENABLED and any(kw in pattern for kw in ["clickup", "task", r"86[a-z0-9]"]):
+        if not _CLICKUP_ENABLED and any(kw in pattern for kw in ["clickup", r"86[a-z0-9]"]):
             continue
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_QUICK

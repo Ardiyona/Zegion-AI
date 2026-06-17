@@ -86,6 +86,11 @@ User: "isi deskripsi task 86abc menjadi 'Fix login bug on mobile'" → [CLICKUP_
 PENTING: description= harus COPY PERSIS teks user. "Fix login bug on mobile" bukan "Perbaiki bug login di mobile".
 User: "ubah nama task X menjadi 'nama baru'" → [CLICKUP_UPDATE_TASK task_id="X" name="nama baru"] → (terima hasil) → [DONE] Nama task berhasil diubah.
 User: "ubah status task X jadi done" → [CLICKUP_UPDATE_TASK task_id="X" status="done"] → (terima hasil) → [DONE] Status berhasil diubah.
+
+PENTING — EXECUTOR MODE:
+- Kamu di EXECUTOR mode. JANGAN gunakan [RESPOND].
+- Untuk mengakhiri, SELALU gunakan: [DONE] jawaban singkat di sini
+- [RESPOND] adalah format Planner, BUKAN Executor. Penggunaan [RESPOND] akan diabaikan sistem.
 """
 
 
@@ -581,6 +586,21 @@ def execute_plan(
         # Print per-step telemetry
         _print_telemetry(f"EXECUTOR step {step + 1}", exec_model, ctx_chars, ai)
 
+        # Treat [RESPOND] as [DONE] — model sometimes uses planner format instead of executor format
+        # Handles: [RESPOND] message="...", [RESPOND] message='...', [RESPOND]\n{"message": "..."}
+        respond_match = (
+            re.search(r'\[RESPOND\].*?message=["\']([^"\']*)["\']', ai, re.DOTALL) or
+            re.search(r'\[RESPOND\]\s*\{[^}]*"message"\s*:\s*"([^"]*)"', ai, re.DOTALL)
+        )
+        if respond_match and "[DONE]" not in ai:
+            final_response = respond_match.group(1)
+            print(f"    ✅ RESPOND→DONE: {final_response[:200]}")
+            if task_id:
+                update_task_step(task_id, step, {
+                    "step": step + 1, "action": "DONE", "result": final_response,
+                })
+            break
+
         # Tool parsing hanya setelah stream SELESAI penuh — tidak pada partial buffer
         if "[DONE]" in ai:
             done_idx = ai.index("[DONE]")
@@ -814,6 +834,18 @@ def execute_plan(
                 exec_messages.append({"role": "user", "content": "Semua langkah rencana sudah selesai. Tulis [DONE] diikuti konfirmasi singkat hasil akhir saja. JANGAN ceritakan langkah-langkah yang sudah dikerjakan."})
                 plan_actions = []  # prevent re-triggering
         else:
+            # Kalau semua planned actions sudah selesai, jangan nanya model lagi — auto-done
+            if not plan_actions and results:
+                success_results = [r for r in results if not str(r.get("result", "")).startswith("Error")]
+                if success_results:
+                    final_response = str(success_results[-1]["result"])
+                    print(f"    ✅ AUTO-DONE (plan complete, no tool used): {final_response[:100]}")
+                    if task_id:
+                        update_task_step(task_id, step, {
+                            "step": step + 1, "action": "DONE", "result": final_response,
+                        })
+                    break
+
             print(f"    💭 (no tool used, asking AI to continue)")
             exec_messages.append({"role": "assistant", "content": ai})
             exec_messages.append({"role": "user", "content": "Lanjutkan. Gunakan tool yang sesuai, atau tulis [DONE] diikuti jawaban jika sudah selesai. JANGAN buat file."})
