@@ -308,7 +308,15 @@ body {
   cursor: pointer;
   flex-shrink: 0;
   line-height: 1;
+  opacity: 0;
+  pointer-events: none;
   transition: all var(--transition);
+}
+
+.conv-item:hover .conv-delete,
+.conv-delete:hover {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .conv-delete:hover {

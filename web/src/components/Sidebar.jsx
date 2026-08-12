@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 function formatTime(ts) {
@@ -14,14 +13,10 @@ function formatTime(ts) {
 }
 
 function ConversationItem({ conv, isActive, onSelect, onDelete }) {
-  const [hovered, setHovered] = useState(false);
-
   return (
     <div
       className={`conv-item ${isActive ? 'active' : ''}`}
       onClick={() => onSelect(conv.id)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <div className="conv-icon">💬</div>
       <div className="conv-body">
@@ -32,15 +27,13 @@ function ConversationItem({ conv, isActive, onSelect, onDelete }) {
           <span>{formatTime(conv.updated_at)}</span>
         </div>
       </div>
-      {hovered && (
-        <button
-          className="conv-delete"
-          onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
-          title="Hapus conversation"
-        >
-          ×
-        </button>
-      )}
+      <button
+        className="conv-delete"
+        onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
+        title="Hapus conversation"
+      >
+        ×
+      </button>
     </div>
   );
 }
