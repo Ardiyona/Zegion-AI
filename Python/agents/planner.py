@@ -220,19 +220,23 @@ def create_plan(user_message, project_index="", model=None):
     Return: (plan, raw)
     """
     plan_model = model or DEFAULT_MODEL
+    system_prompt, intent = build_prompt(user_message)
+
     context = ""
     if project_index:
         context = f"\n\nKonteks project saat ini:\n{project_index}\n"
 
-    kb_context = kb_get_relevant(user_message, max_entries=5)
-    if kb_context:
-        context += f"\n\n{kb_context}\n"
+    # Inject per-conversation summaries relevan untuk semua intent
+    if intent:
+        kb_context = kb_get_relevant(user_message, max_entries=3)
+        if kb_context:
+            context += f"\n\n{kb_context}\n"
 
-    global_profile = get_global_profile_context()
-    if global_profile:
-        context += f"\n\n{global_profile}\n"
-
-    system_prompt, intent = build_prompt(user_message)
+    # Inject global profile untuk semua intent
+    if intent:
+        global_profile = get_global_profile_context()
+        if global_profile:
+            context += f"\n\n{global_profile}\n"
 
     messages = [
         {"role": "system", "content": system_prompt},

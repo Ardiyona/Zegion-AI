@@ -426,6 +426,7 @@ def kb_get_context(max_entries=10):
         rows = conn.execute(
             """SELECT content, importance, is_corrected
                FROM knowledge_base
+               WHERE source_conv_id IS NULL
                ORDER BY
                    is_corrected DESC,
                    CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
@@ -463,6 +464,7 @@ def kb_get_relevant(user_input: str, max_entries: int = 5) -> str:
         rows = conn.execute(
             """SELECT content, importance, is_corrected
                FROM knowledge_base
+               WHERE source_conv_id IS NOT NULL
                ORDER BY
                    is_corrected DESC,
                    CASE importance WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,

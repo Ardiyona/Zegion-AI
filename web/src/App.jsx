@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { MessageList } from './components/MessageList';
 import { ChatInput } from './components/ChatInput';
 import { ModelManager } from './components/ModelManager';
+import { Settings } from './components/Settings';
 
 const AGENT_NAME = 'Zegion';
 const AGENT_VERSION = '1.0';
@@ -67,6 +68,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<ChatPage chat={chat} activeModel={modelsState.activeModel} />} />
         <Route path="/models" element={<ModelManager {...modelsState} />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

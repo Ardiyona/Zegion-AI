@@ -10,7 +10,7 @@ import re
 from typing import Optional
 
 from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS
-from agents.summarizer import trigger_executor_success, trigger_message_count, trigger_on_close
+from agents.summarizer import trigger_executor_success, trigger_message_count, trigger_on_close, mark_agent_tool_used, mark_request_start, mark_request_done
 
 from config import (
     AGENT_NAME,
@@ -372,6 +372,19 @@ def handle_message(
     Returns: (response, conv_id, mode, plan)
     response is None when cancelled — caller must NOT send a response to client.
     """
+    mark_request_start()
+    try:
+        return _handle_message_inner(user_input, conv_id, project_index, model)
+    finally:
+        mark_request_done()
+
+
+def _handle_message_inner(
+    user_input: str,
+    conv_id: str,
+    project_index: str = "",
+    model: str = DEFAULT_MODEL,
+) -> tuple[Optional[str], str, str, list]:
     if not conv_id or not get_conversation(conv_id):
         conv = create_conversation()
         conv_id = conv["id"]
@@ -435,6 +448,7 @@ def handle_message(
     task_id = task["id"]
 
     clear_cancel(conv_id)
+    mark_agent_tool_used(conv_id)
 
     if mode == MODE_DEEP:
         final_response = run_deep(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model)

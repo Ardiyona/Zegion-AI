@@ -78,7 +78,7 @@ def detect_mode(user_input):
     # Cek QUICK
     for pattern in QUICK_KEYWORDS:
         # Skip ClickUp patterns if not configured
-        if not _CLICKUP_ENABLED and any(kw in pattern for kw in ["clickup", "task", r"86[a-z0-9]"]):
+        if not _CLICKUP_ENABLED and any(kw in pattern for kw in ["clickup", r"86[a-z0-9]"]):
             continue
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_QUICK
@@ -88,8 +88,8 @@ def detect_mode(user_input):
         if re.search(pattern, text, re.IGNORECASE):
             return MODE_CHAT
 
-    # Default: short input → chat, long input → quick
-    return MODE_CHAT if len(text) < 80 else MODE_QUICK
+    # Default: chat — unrecognized input is more likely conversational than actionable
+    return MODE_CHAT
 
 
 def parse_override(user_input):

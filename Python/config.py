@@ -33,7 +33,7 @@ AGENT_DESCRIPTION = "AI Assistant lokal yang cerdas dan helpful"
 # =========================
 
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3:4b")
-SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "qwen3:4b")
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", os.getenv("DEFAULT_MODEL", "qwen3:4b"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 
 # =========================

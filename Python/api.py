@@ -15,6 +15,7 @@ from agents.router import mode_label
 from agents.cancel import request_cancel, is_cancelled, clear_cancel
 from config import AGENT_NAME, AGENT_VERSION, DEFAULT_MODEL
 from core import handle_message, quick_init, smart_delete_conversation
+from agents.summarizer import reset_global_profile
 from db import (
     init_db,
     create_conversation,
@@ -168,6 +169,13 @@ async def delete_kb_entry(entry_id: int):
     """Hapus KB entry (safety valve: kalau ternyata salah)."""
     ok = kb_delete(entry_id)
     return {"deleted": ok}
+
+
+@app.delete("/system/global-profile")
+async def reset_global_profile_endpoint():
+    """Reset global user profile — hapus semua accumulated user facts."""
+    deleted = reset_global_profile()
+    return {"deleted": deleted}
 
 
 # =========================
