@@ -2,11 +2,11 @@
 summarizer.py — Event-based conversation summarization.
 
 Triggers:
-  - executor_success(conv_id, results): called after executor tool success
-  - message_count(conv_id): called every 5 messages (fallback)
-  - on_close(conv_id): called when conversation closes
+  - executor_success(conv_id, results): after significant tool writes/mutations
+  - message_count(conv_id): every 5 messages with tools, 20 messages for chat-only
+  - on_close(conv_id): when conversation closes
 
-All triggers run async (background thread) — never blocks user response.
+All triggers run async (background thread) and persist JSON summaries to SQLite KB.
 """
 
 import json

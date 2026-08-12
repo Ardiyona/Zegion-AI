@@ -40,7 +40,6 @@ from agents import (
     generate_response,
     critique,
     reflect,
-    compress_memory,
     create_task,
     complete_task,
     fail_task,
