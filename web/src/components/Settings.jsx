@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { apiFetch } from '../api';
 
 const API = 'http://localhost:8000';
 
@@ -9,7 +10,7 @@ export function Settings() {
   const handleReset = async () => {
     setStatus('loading');
     try {
-      const res = await fetch(`${API}/system/global-profile`, { method: 'DELETE' });
+      const res = await apiFetch('/system/global-profile', { method: 'DELETE' });
       const data = await res.json();
       setStatus(data.deleted ? 'success' : 'empty');
     } catch {
