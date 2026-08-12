@@ -11,7 +11,6 @@ All triggers run async (background thread) and persist JSON summaries to SQLite 
 
 import json
 import logging
-import re
 import threading
 import time
 from typing import Optional
@@ -73,6 +72,20 @@ Output format (strict JSON, no extra text):
 {"tasks_touched": [], "actions": [], "key_decisions": [], "user_info_detected": []}"""
 
 
+def _parse_summary_json(raw: str) -> Optional[dict]:
+    decoder = json.JSONDecoder()
+    for i, char in enumerate(raw):
+        if char != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(raw[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
 def _build_conversation_text(conv_id: str, limit: int = 30) -> str:
     messages = get_messages(conv_id, limit=limit)
     if not messages:
@@ -108,13 +121,28 @@ def _run_summary(conv_id: str, reason: str) -> Optional[dict]:
             options={"temperature": 0, "num_ctx": 4096},
         )
         raw = response["message"]["content"].strip()
+        summary = _parse_summary_json(raw)
 
-        # Extract JSON — handle model wrapping in markdown
-        m = re.search(r'\{[\s\S]*\}', raw)
-        if not m:
-            logger.warning("[summarizer] no JSON in response: %s", raw[:100])
+        if summary is None:
+            logger.warning("[summarizer] invalid JSON summary, retrying once: %s", raw[:100])
+            response = _ollama_chat(
+                model=SUMMARY_MODEL,
+                messages=[
+                    {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": (
+                        "Your previous response was not valid JSON. "
+                        "Respond with the JSON object only, starting with { and ending with }.\n\n"
+                        f"Conversation:\n{conv_text}"
+                    )},
+                ],
+                options={"temperature": 0, "num_ctx": 4096},
+            )
+            raw = response["message"]["content"].strip()
+            summary = _parse_summary_json(raw)
+
+        if summary is None:
+            logger.warning("[summarizer] failed to parse JSON summary after retry: %s", raw[:100])
             return None
-        summary = json.loads(m.group())
 
     except Exception as e:
         logger.error("[summarizer] model error: %s", e)
