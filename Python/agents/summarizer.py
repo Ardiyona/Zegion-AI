@@ -105,7 +105,7 @@ def _run_summary(conv_id: str, reason: str) -> Optional[dict]:
                 {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Summarize this conversation:\n\n{conv_text}"},
             ],
-            options={"temperature": 0},
+            options={"temperature": 0, "num_ctx": 4096},
         )
         raw = response["message"]["content"].strip()
 
