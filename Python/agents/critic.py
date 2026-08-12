@@ -1,5 +1,8 @@
+import time
+
 from ollama import chat
 from config import DEFAULT_MODEL
+from agents.usage import record_usage
 
 
 # =========================
@@ -49,13 +52,12 @@ def critique(user_request, results, exec_response, model=None):
     # Format hasil untuk review
     results_text = _format_results(results)
 
-    response = chat(
-        model=model or DEFAULT_MODEL,
-        messages=[
-            {"role": "system", "content": CRITIC_PROMPT},
-            {
-                "role": "user",
-                "content": f"""Permintaan user: {user_request}
+    review_model = model or DEFAULT_MODEL
+    messages = [
+        {"role": "system", "content": CRITIC_PROMPT},
+        {
+            "role": "user",
+            "content": f"""Permintaan user: {user_request}
 
 Hasil eksekusi:
 {results_text}
@@ -63,8 +65,20 @@ Hasil eksekusi:
 Response executor: {exec_response[:500]}
 
 Apakah hasilnya BENAR dan SESUAI requirement?"""
-            }
-        ]
+        }
+    ]
+    start = time.time()
+    response = chat(model=review_model, messages=messages)
+    elapsed = time.time() - start
+    record_usage(
+        "critic",
+        review_model,
+        prompt_tokens=response.get("prompt_eval_count", 0),
+        output_tokens=response.get("eval_count", 0),
+        prompt_eval_s=response.get("prompt_eval_duration", 0) / 1e9,
+        generation_s=response.get("eval_duration", 0) / 1e9,
+        duration_s=elapsed,
+        prompt_chars=sum(len(m["content"]) for m in messages),
     )
 
     review = response["message"]["content"]

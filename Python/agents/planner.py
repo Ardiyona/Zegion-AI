@@ -4,6 +4,7 @@ import time
 from ollama import chat
 from config import CLICKUP_API_KEY, DEFAULT_MODEL
 from db import kb_get_relevant
+from agents.usage import record_usage
 from agents.summarizer import get_global_profile_context
 
 _CLICKUP_ENABLED = bool(CLICKUP_API_KEY)
@@ -273,6 +274,17 @@ def create_plan(user_message, project_index="", model=None):
     if tps > 0:
         print(f"  TPS: {tps:.2f}")
     print()
+
+    record_usage(
+        "planner",
+        plan_model,
+        prompt_tokens=p_eval_count,
+        output_tokens=eval_count,
+        prompt_eval_s=p_eval_s,
+        generation_s=gen_s,
+        duration_s=elapsed,
+        prompt_chars=prompt_chars,
+    )
 
     return plan, raw
 

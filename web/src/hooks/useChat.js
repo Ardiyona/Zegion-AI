@@ -178,6 +178,7 @@ export function useChat() {
             mode: data.mode,
             mode_key: data.mode_key,
             plan: data.plan || [],
+            usage: data.usage || {},
             created_at: Date.now() / 1000,
           }]);
           fetchConversations();

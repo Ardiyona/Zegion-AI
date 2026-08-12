@@ -9,8 +9,9 @@ import os
 import re
 from typing import Optional
 
-from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS
+from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS, _print_telemetry
 from agents.summarizer import trigger_executor_success, trigger_message_count, trigger_on_close, mark_agent_tool_used, mark_request_start, mark_request_done
+from agents.usage import clear_usage, get_usage, start_usage
 
 from config import (
     AGENT_NAME,
@@ -203,7 +204,9 @@ def run_chat(user_input: str, conv_id: str, model: str = DEFAULT_MODEL) -> Optio
     chat_messages.append({"role": "user", "content": user_input})
 
     try:
-        return _stream_chat(model=model, messages=chat_messages, conv_id=conv_id)
+        result = _stream_chat(model=model, messages=chat_messages, conv_id=conv_id)
+        _print_telemetry("CHAT", model, sum(len(m["content"]) for m in chat_messages), result)
+        return result
     except _CancelledError:
         return None
     except Exception as e:
@@ -363,19 +366,21 @@ def handle_message(
     conv_id: str,
     project_index: str = "",
     model: str = DEFAULT_MODEL,
-) -> tuple[Optional[str], str, str, list]:
+) -> tuple[Optional[str], str, str, list, dict]:
     """
     Handle 1 pesan user — routing ke mode yang tepat.
     Simpan user + assistant message ke DB.
 
-    Returns: (response, conv_id, mode, plan)
+    Returns: (response, conv_id, mode, plan, usage)
     response is None when cancelled — caller must NOT send a response to client.
     """
+    start_usage(model)
     mark_request_start()
     try:
         return _handle_message_inner(user_input, conv_id, project_index, model)
     finally:
         mark_request_done()
+        clear_usage()
 
 
 def _handle_message_inner(
@@ -383,7 +388,7 @@ def _handle_message_inner(
     conv_id: str,
     project_index: str = "",
     model: str = DEFAULT_MODEL,
-) -> tuple[Optional[str], str, str, list]:
+) -> tuple[Optional[str], str, str, list, dict]:
     if not conv_id or not get_conversation(conv_id):
         conv = create_conversation()
         conv_id = conv["id"]
@@ -392,8 +397,9 @@ def _handle_message_inner(
     if user_input.strip().lower() == "resume":
         pending = get_pending_tasks()
         if not pending:
-            add_message(conv_id, "assistant", "Tidak ada task pending.")
-            return "Tidak ada task pending.", conv_id, "chat", []
+            usage = get_usage()
+            add_message(conv_id, "assistant", "Tidak ada task pending.", usage=usage)
+            return "Tidak ada task pending.", conv_id, "chat", [], usage
 
         responses = []
         for task in pending:
@@ -407,7 +413,8 @@ def _handle_message_inner(
 
         cleanup_completed()
         result = "\n---\n".join(responses)
-        return result, conv_id, "resume", []
+        usage = get_usage()
+        return result, conv_id, "resume", [], usage
 
     # ── DETECT MODE ───────────────────────────────────
     forced_mode, clean_input = parse_override(user_input)
@@ -430,17 +437,19 @@ def _handle_message_inner(
         if final_response is None or pop_was_cancelled(conv_id) or is_cancelled(conv_id):
             clear_cancel(conv_id)
             delete_message(user_msg_id)
-            return None, conv_id, mode, plan
-        add_message(conv_id, "assistant", final_response, mode="Chat", mode_key="chat")
-        return final_response, conv_id, mode, plan
+            return None, conv_id, mode, plan, get_usage()
+        usage = get_usage()
+        add_message(conv_id, "assistant", final_response, mode="Chat", mode_key="chat", usage=usage)
+        return final_response, conv_id, mode, plan, usage
 
     # ── AGENT MODE (QUICK / DEEP) ─────────────────────
     plan_input = _inject_session_context(clean_input, conv_id)
     plan_result, raw_plan = create_plan(plan_input, project_index, model=model)
 
     if not plan_result:
-        add_message(conv_id, "assistant", raw_plan, mode_key=mode)
-        return raw_plan, conv_id, mode, []
+        usage = get_usage()
+        add_message(conv_id, "assistant", raw_plan, mode_key=mode, usage=usage)
+        return raw_plan, conv_id, mode, [], usage
 
     plan = plan_result
     task = create_task(clean_input, plan)
@@ -458,17 +467,18 @@ def _handle_message_inner(
     if pop_was_cancelled(conv_id) or is_cancelled(conv_id) or not final_response:
         clear_cancel(conv_id)
         delete_message(user_msg_id)
-        return None, conv_id, mode, plan
+        return None, conv_id, mode, plan, get_usage()
 
+    usage = get_usage()
     mode_name = mode_label(mode)
     add_message(
         conv_id, "assistant", final_response,
-        mode=mode_name, mode_key=mode, plan=plan
+        mode=mode_name, mode_key=mode, plan=plan, usage=usage
     )
     trigger_message_count(conv_id)
 
     cleanup_completed()
-    return final_response, conv_id, mode, plan
+    return final_response, conv_id, mode, plan, usage
 
 
 # =========================

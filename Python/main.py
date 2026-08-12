@@ -46,7 +46,7 @@ while True:
         break
 
     # Delegate ke core — conv_id di-manage oleh core (auto-create jika None)
-    response, conv_id, mode, plan = handle_message(user, conv_id, project_index)
+    response, conv_id, mode, plan, usage = handle_message(user, conv_id, project_index)
 
     print(f"\n[{mode_label(mode)}]")
     print("\n" + "=" * 40)

@@ -35,6 +35,7 @@ from tools.clickup import (
     clickup_smart_add_comment,
 )
 from config import DEFAULT_MODEL
+from agents.usage import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,16 @@ def _print_telemetry(label: str, model: str, prompt_chars: int, result: '_ChatRe
     if result.tps > 0:
         print(f"  TPS: {result.tps:.2f}")
     print()
+
+    record_usage(
+        label.lower().replace(" ", "_"),
+        model,
+        prompt_tokens=result.prompt_eval_count,
+        output_tokens=result.eval_count,
+        prompt_eval_s=result.prompt_eval_s,
+        generation_s=result.eval_s,
+        prompt_chars=prompt_chars,
+    )
 
 
 def _stream_chat(

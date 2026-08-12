@@ -51,6 +51,7 @@ def init_db():
                 mode                TEXT,
                 mode_key            TEXT,
                 plan                TEXT    DEFAULT '[]',
+                usage               TEXT    DEFAULT '{}',
                 created_at          INTEGER NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
@@ -76,6 +77,9 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_kb_importance
                 ON knowledge_base(importance, updated_at DESC);
         """)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+        if "usage" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN usage TEXT DEFAULT '{}'")
         conn.commit()
     finally:
         conn.close()
@@ -175,18 +179,19 @@ def delete_conversation(conv_id):
 # MESSAGE CRUD
 # =========================
 
-def add_message(conv_id, role, content, mode=None, mode_key=None, plan=None):
+def add_message(conv_id, role, content, mode=None, mode_key=None, plan=None, usage=None):
     """Tambah 1 pesan ke conversation. Return message dict."""
     now = int(time.time())
     plan_json = json.dumps(plan or [])
+    usage_json = json.dumps(usage or {})
 
     conn = get_connection()
     try:
         cursor = conn.execute(
             """INSERT INTO messages
-               (conversation_id, role, content, mode, mode_key, plan, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (conv_id, role, content, mode, mode_key, plan_json, now)
+               (conversation_id, role, content, mode, mode_key, plan, usage, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (conv_id, role, content, mode, mode_key, plan_json, usage_json, now)
         )
         msg_id = cursor.lastrowid
         conn.commit()
@@ -203,6 +208,7 @@ def add_message(conv_id, role, content, mode=None, mode_key=None, plan=None):
         "mode": mode,
         "mode_key": mode_key,
         "plan": plan or [],
+        "usage": usage or {},
         "created_at": now,
     }
 
@@ -223,7 +229,7 @@ def get_messages(conv_id, limit=200):
     conn = get_connection()
     try:
         rows = conn.execute(
-            """SELECT id, conversation_id, role, content, mode, mode_key, plan, created_at
+            """SELECT id, conversation_id, role, content, mode, mode_key, plan, usage, created_at
                FROM messages
                WHERE conversation_id = ?
                ORDER BY created_at ASC
@@ -238,6 +244,10 @@ def get_messages(conv_id, limit=200):
                 d["plan"] = json.loads(d["plan"] or "[]")
             except Exception:
                 d["plan"] = []
+            try:
+                d["usage"] = json.loads(d["usage"] or "{}")
+            except Exception:
+                d["usage"] = {}
             result.append(d)
 
         return result

@@ -689,10 +689,46 @@ body {
 .message-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   font-size: 11px;
   color: var(--text-muted);
   padding: 0 4px;
+}
+
+.usage-details {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.usage-details summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 9px;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.usage-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.usage-events {
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  min-width: 260px;
+}
+
+.usage-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 2px 0;
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
 }
 
 /* Thinking indicator */

@@ -385,7 +385,7 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
 
             loop = asyncio.get_event_loop()
             try:
-                response, new_conv_id, mode, plan = await loop.run_in_executor(
+                response, new_conv_id, mode, plan, usage = await loop.run_in_executor(
                     None,
                     handle_message,
                     user_input,
@@ -412,6 +412,7 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
                 "mode": mode_label(mode),
                 "mode_key": mode,
                 "plan": plan,
+                "usage": usage,
                 "conv_id": new_conv_id,
             })
 

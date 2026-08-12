@@ -16,6 +16,38 @@ function ThinkingBubble() {
   );
 }
 
+function formatTokens(n) {
+  if (!n) return '0';
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+function formatSeconds(n) {
+  if (!n) return '0s';
+  return `${Number(n).toFixed(n >= 10 ? 1 : 2)}s`;
+}
+
+function UsageDetails({ usage }) {
+  const events = usage?.events || [];
+  if (!usage || events.length === 0) return null;
+
+  return (
+    <details className="usage-details">
+      <summary>
+        Tokens: {formatTokens(usage.total_prompt_tokens)} in / {formatTokens(usage.total_output_tokens)} out · {formatSeconds(usage.total_time_s)}
+      </summary>
+      <div className="usage-events">
+        {events.map((event, i) => (
+          <div key={i} className="usage-event">
+            <span>{event.phase}</span>
+            <span>{formatTokens(event.prompt_tokens)} in / {formatTokens(event.output_tokens)} out · {formatSeconds(event.duration_s)}</span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function MessageBubble({ msg }) {
   const isUser = msg.role === 'user';
 
@@ -42,6 +74,7 @@ function MessageBubble({ msg }) {
                 📋 {msg.plan.filter(p => p.action !== 'RESPOND').length} steps
               </span>
             )}
+            <UsageDetails usage={msg.usage} />
           </div>
         )}
       </div>
