@@ -9,7 +9,7 @@ import secrets
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request, status
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request, status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -58,7 +58,7 @@ async def require_ws_api_key(websocket: WebSocket) -> bool:
     provided = websocket.headers.get("X-API-Key") or websocket.query_params.get("api_key")
     if _api_key_valid(provided):
         return True
-    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    await websocket.close(code=http_status.WS_1008_POLICY_VIOLATION)
     return False
 
 
@@ -94,7 +94,7 @@ async def require_api_key(request: Request, call_next):
     if request.method != "OPTIONS" and not _api_key_valid(request.headers.get("X-API-Key")):
         return JSONResponse(
             {"detail": "Invalid API key"},
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
         )
     return await call_next(request)
 
