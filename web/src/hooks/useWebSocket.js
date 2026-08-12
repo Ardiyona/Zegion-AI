@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-
-const WS_URL = 'ws://localhost:8000/ws';
+import { wsUrl } from '../api';
 
 export function useWebSocket() {
   const [status, setStatus] = useState('connecting'); // connecting | ready | error
@@ -12,7 +11,7 @@ export function useWebSocket() {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     setStatus('connecting');
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(wsUrl('/ws'));
     wsRef.current = ws;
 
     ws.onopen = () => {

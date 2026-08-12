@@ -131,6 +131,9 @@ Edit file `.env` untuk mengubah pengaturan:
 DEFAULT_MODEL=qwen3:4b
 EMBEDDING_MODEL=nomic-embed-text
 
+# API auth (wajib sama dengan web/.env VITE_API_KEY)
+API_KEY=change_this_to_a_long_random_token
+
 # Pipeline tuning
 MAX_CRITIC_RETRIES=2
 MAX_REFLECT_RETRIES=1
@@ -143,6 +146,12 @@ SERPER_API_KEY=your_key        # jika pakai Serper
 # ClickUp (opsional)
 CLICKUP_API_KEY=pk_your_api_key
 CLICKUP_WORKSPACE_ID=your_workspace_id
+```
+
+Frontend juga butuh token sama di `web/.env`:
+
+```env
+VITE_API_KEY=change_this_to_a_long_random_token
 ```
 
 ### Mendapatkan ClickUp API Key (Opsional)

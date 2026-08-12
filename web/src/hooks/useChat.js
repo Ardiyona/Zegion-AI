@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { apiFetch, wsUrl } from '../api';
 
-const API_BASE = 'http://localhost:8000';
 const POLL_INTERVAL = 3000;
 
 export function useChat() {
@@ -28,7 +28,7 @@ export function useChat() {
   // ── Fetch conversation list ────────────────────────
   const fetchConversations = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/conversations`);
+      const res = await apiFetch(`/conversations`);
       const data = await res.json();
       setConversations(data.conversations || []);
     } catch (e) {
@@ -39,7 +39,7 @@ export function useChat() {
   // ── Fetch messages ─────────────────────────────────
   const fetchMessages = useCallback(async (convId) => {
     try {
-      const res = await fetch(`${API_BASE}/conversations/${convId}/messages`);
+      const res = await apiFetch(`/conversations/${convId}/messages`);
       const data = await res.json();
       return data.messages || [];
     } catch (e) {
@@ -83,7 +83,7 @@ export function useChat() {
   // ── Silent cleanup: delete empty conversation, reset to pending ──
   const cleanupEmptyConversation = useCallback(async (convId) => {
     try {
-      await fetch(`${API_BASE}/conversations/${convId}`, { method: 'DELETE' });
+      await apiFetch(`/conversations/${convId}`, { method: 'DELETE' });
     } catch {}
     setConversations((prev) => prev.filter((c) => c.id !== convId));
     if (wsRef.current) {
@@ -109,7 +109,7 @@ export function useChat() {
     }
 
     setWsStatus('connecting');
-    const ws = new WebSocket(`ws://localhost:8000/ws/${convId}`);
+    const ws = new WebSocket(wsUrl(`/ws/${convId}`));
     wsRef.current = ws;
 
     ws.onopen = async () => {
@@ -242,7 +242,7 @@ export function useChat() {
   // ── Delete conversation ────────────────────────────
   const deleteConversation = useCallback(async (convId) => {
     try {
-      await fetch(`${API_BASE}/conversations/${convId}`, { method: 'DELETE' });
+      await apiFetch(`/conversations/${convId}`, { method: 'DELETE' });
       const updated = conversations.filter((c) => c.id !== convId);
       setConversations(updated);
 
@@ -279,7 +279,7 @@ export function useChat() {
     }, 0);
 
     try {
-      await fetch(`${API_BASE}/stop/${convId}`, { method: 'POST' });
+      await apiFetch(`/stop/${convId}`, { method: 'POST' });
     } catch (e) {
       console.error('[API] stopExecution failed:', e);
     }
@@ -295,7 +295,7 @@ export function useChat() {
       setMessages([{ role: 'user', content: text, created_at: Date.now() / 1000 }]);
       setIsThinking(true);
       try {
-        const res = await fetch(`${API_BASE}/conversations`, { method: 'POST' });
+        const res = await apiFetch(`/conversations`, { method: 'POST' });
         const conv = await res.json();
         setConversations((prev) => [conv, ...prev]);
         setActiveConvId(conv.id);

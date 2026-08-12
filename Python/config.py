@@ -66,6 +66,12 @@ BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 # =========================
+# API AUTH
+# =========================
+
+API_KEY = os.getenv("API_KEY", "")
+
+# =========================
 # CLICKUP API (bisa diubah via .env)
 # =========================
 

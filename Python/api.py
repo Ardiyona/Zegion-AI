@@ -5,15 +5,17 @@ Jalankan: python api.py
 
 import asyncio
 import json
+import secrets
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from agents.router import mode_label
 from agents.cancel import request_cancel, is_cancelled, clear_cancel
-from config import AGENT_NAME, AGENT_VERSION, DEFAULT_MODEL
+from config import AGENT_NAME, AGENT_VERSION, DEFAULT_MODEL, API_KEY
 from core import handle_message, quick_init, smart_delete_conversation
 from agents.summarizer import reset_global_profile
 from db import (
@@ -41,6 +43,26 @@ _state = {
 
 
 # =========================
+# API AUTH
+# =========================
+
+if not API_KEY:
+    raise RuntimeError("API_KEY belum diset di .env")
+
+
+def _api_key_valid(provided: str | None) -> bool:
+    return bool(provided) and secrets.compare_digest(provided, API_KEY)
+
+
+async def require_ws_api_key(websocket: WebSocket) -> bool:
+    provided = websocket.headers.get("X-API-Key") or websocket.query_params.get("api_key")
+    if _api_key_valid(provided):
+        return True
+    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    return False
+
+
+# =========================
 # LIFESPAN
 # =========================
 
@@ -65,6 +87,17 @@ app = FastAPI(
     version=AGENT_VERSION,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    if request.method != "OPTIONS" and not _api_key_valid(request.headers.get("X-API-Key")):
+        return JSONResponse(
+            {"detail": "Invalid API key"},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+        )
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -327,6 +360,9 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
       {"type": "response", "text": "...", "mode": "...", "mode_key": "...", "plan": [...], "conv_id": "..."}
       {"type": "error", "text": "..."}
     """
+    if not await require_ws_api_key(websocket):
+        return
+
     await websocket.accept()
     print(f"[WS] Client connected → conv: {conv_id[:8]}...")
 

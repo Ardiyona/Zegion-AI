@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { apiFetch } from '../api';
 import { CURATED_MODELS } from '../models';
-
-const API = 'http://localhost:8000';
 
 const curatedNames = new Set(CURATED_MODELS.map(m => m.name));
 
@@ -34,7 +33,7 @@ export function useModels() {
 
   const fetchHardware = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/system/hardware`);
+      const r = await apiFetch(`/system/hardware`);
       const data = await r.json();
       setHardware(data);
       setHardwareLoaded(true);
@@ -45,7 +44,7 @@ export function useModels() {
 
   const fetchInstalled = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/models/installed`);
+      const r = await apiFetch(`/models/installed`);
       const data = await r.json();
       setInstalledModels(data.models || []);
     } catch {
@@ -55,7 +54,7 @@ export function useModels() {
 
   const fetchActive = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/models/active`);
+      const r = await apiFetch(`/models/active`);
       const data = await r.json();
       setActiveModelState(data.model || '');
     } catch {
@@ -75,7 +74,7 @@ export function useModels() {
 
   const setActiveModel = useCallback(async (name) => {
     try {
-      await fetch(`${API}/models/active`, {
+      await apiFetch(`/models/active`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: name }),
@@ -95,7 +94,7 @@ export function useModels() {
     speedRefs.current[name] = { lastBytes: -1, lastTime: Date.now(), samples: [] };
 
     try {
-      const res = await fetch(`${API}/models/pull`, {
+      const res = await apiFetch(`/models/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: name }),
@@ -205,7 +204,7 @@ export function useModels() {
       if (err.name === 'AbortError') {
         // Delete partial file from Ollama cache so storage isn't wasted
         try {
-          await fetch(`${API}/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+          await apiFetch(`/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
         } catch {
           // best-effort — ignore if Ollama unreachable
         }
@@ -230,7 +229,7 @@ export function useModels() {
 
   const deleteModel = useCallback(async (name) => {
     try {
-      await fetch(`${API}/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await apiFetch(`/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
       await fetchInstalled();
       setActiveModelState(prev => (prev === name ? '' : prev));
     } catch {
