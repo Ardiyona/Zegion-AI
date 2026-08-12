@@ -1,7 +1,8 @@
-import os
 import re
 
-_CLICKUP_ENABLED = bool(os.getenv("CLICKUP_API_KEY"))
+from config import CLICKUP_API_KEY
+
+_CLICKUP_ENABLED = bool(CLICKUP_API_KEY)
 
 # =========================
 # MODE CONSTANTS

@@ -495,6 +495,14 @@ def _user_wants_update(user_request: str) -> bool:
     return any(kw in req for kw in keywords)
 
 
+def _last_successful_tool_result(results: list[dict]) -> str:
+    for r in reversed(results):
+        result = str(r.get("result", ""))
+        if result and not result.startswith("Error") and r.get("action") not in ("RESPOND", "DONE"):
+            return result
+    return ""
+
+
 def execute_plan(
     plan: list[dict],
     task_id: Optional[str] = None,
@@ -613,24 +621,13 @@ def execute_plan(
                 ai = pre_done  # drop [DONE], fall through to normal tool handling below
                 print(f"    ⚠️  Tool+DONE in same response — executing tool first, deferring DONE")
             else:
-                final_response = ai[done_idx + 6:].strip()
+                final_response = ai[done_idx + 6:].strip() or pre_done
 
                 # If [DONE] is empty, synthesize from tool results
                 if not final_response and results:
-                    success_results = [
-                        r for r in results
-                        if not str(r.get("result", "")).startswith("Error")
-                        and r.get("action") not in ("RESPOND", "DONE")
-                    ]
-                    if success_results:
-                        parts = []
-                        for r in success_results[-3:]:  # last 3 successful results
-                            action = r.get("action", "")
-                            result = str(r.get("result", ""))[:300]
-                            target = r.get("target", "")
-                            parts.append(f"[{action}] {target}: {result}")
-                        final_response = "\n".join(parts)
-                        print(f"    ⚠️  Empty [DONE] — synthesized response from {len(success_results)} tool results")
+                    final_response = _last_successful_tool_result(results)
+                    if final_response:
+                        print("    ⚠️  Empty [DONE] — using last tool result")
 
                 print(f"    ✅ DONE: {final_response[:2000]}{'...' if len(final_response) > 2000 else ''}")
                 if task_id:
@@ -828,9 +825,17 @@ def execute_plan(
                 consecutive_errors = 0
                 exec_messages.append({"role": "user", "content": tool_result})
 
-            # Check if all planned actions are done → hint model to write [DONE]
+            # Direct-response tools already return user-ready output. Do not ask model to paraphrase.
             done_actions = [r.get("action", "").upper() for r in results]
             if plan_actions and all(a in done_actions for a in plan_actions):
+                if tool_name in _DIRECT_RESPONSE_TOOLS:
+                    final_response = str(tool_result)
+                    print(f"    ✅ AUTO-DONE (direct tool result): {final_response[:100]}")
+                    if task_id:
+                        update_task_step(task_id, step, {
+                            "step": step + 1, "action": "DONE", "result": final_response,
+                        })
+                    break
                 exec_messages.append({"role": "user", "content": "Semua langkah rencana sudah selesai. Tulis [DONE] diikuti konfirmasi singkat hasil akhir saja. JANGAN ceritakan langkah-langkah yang sudah dikerjakan."})
                 plan_actions = []  # prevent re-triggering
         else:

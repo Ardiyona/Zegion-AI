@@ -1,13 +1,12 @@
-import os
 import re
 import json
 import time
 from ollama import chat
-from config import DEFAULT_MODEL
+from config import CLICKUP_API_KEY, DEFAULT_MODEL
 from db import kb_get_relevant
 from agents.summarizer import get_global_profile_context
 
-_CLICKUP_ENABLED = bool(os.getenv("CLICKUP_API_KEY"))
+_CLICKUP_ENABLED = bool(CLICKUP_API_KEY)
 
 
 # =========================
