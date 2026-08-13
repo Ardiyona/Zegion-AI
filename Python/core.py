@@ -12,6 +12,7 @@ from typing import Optional
 from agents.executor import _stream_chat, _CancelledError, _DIRECT_RESPONSE_TOOLS, _print_telemetry
 from agents.summarizer import trigger_executor_success, trigger_message_count, trigger_on_close, mark_agent_tool_used, mark_request_start, mark_request_done
 from agents.usage import clear_usage, get_usage, start_usage
+from agents.task_queue import update_task_step
 
 from config import (
     AGENT_NAME,
@@ -26,6 +27,8 @@ from config import (
 from tools import (
     build_project_index,
     build_embeddings,
+    clickup_get_tasks,
+    clickup_get_task_detail,
 )
 
 from agents import (
@@ -241,6 +244,63 @@ def _should_skip_responder(results: list[dict], exec_response: str) -> bool:
     return False
 
 
+_CLICKUP_FAST_MUTATION_WORDS = [
+    "buat", "bikin", "create", "add", "tambah", "tambahkan",
+    "ubah", "update", "isi", "ganti", "edit", "set", "rename",
+    "tandai", "selesaikan", "hapus", "delete",
+    "komentar", "comment", "komen",
+]
+
+_CLICKUP_FAST_REFERENCE_WORDS = [
+    "sebelumnya", "tadi", "yang itu", "yang tadi", "yang sama",
+    "itu", "tersebut", "barusan", "previously", "that task", "the task",
+]
+
+
+def _clickup_status_from_text(text: str) -> Optional[str]:
+    if re.search(r"\bin\s*progress\b", text):
+        return "in progress"
+    if re.search(r"\b(to\s*do|todo)\b", text):
+        return "to do"
+    if re.search(r"\b(done|complete|completed|selesai)\b", text):
+        return "complete"
+    return None
+
+
+def try_clickup_fast_path(user_input: str) -> Optional[tuple[list[dict], list[dict], str]]:
+    """Direct ClickUp read-only intents; no Planner/Executor LLM."""
+    text = user_input.lower().strip()
+    if not text or any(word in text for word in _CLICKUP_FAST_MUTATION_WORDS):
+        return None
+
+    task_id_match = re.search(r"\b86[a-z0-9]{5,}\b", text, re.IGNORECASE)
+    if not task_id_match and any(word in text for word in _CLICKUP_FAST_REFERENCE_WORDS):
+        return None
+
+    wants_read = any(word in text for word in [
+        "list", "lihat", "tampilkan", "cek", "ambil", "show", "get", "detail", "info",
+        "apa saja", "semua", "task saya",
+    ])
+    mentions_task = "task" in text or "clickup" in text
+
+    if task_id_match and wants_read:
+        task_id = task_id_match.group(0)
+        plan = [{"step": 1, "action": "CLICKUP_GET_TASK_DETAIL", "params": {"task_id": task_id}, "reason": "Direct read-only intent match"}]
+        result = clickup_get_task_detail(task_id)
+        results = [{"step": 1, "action": "CLICKUP_GET_TASK_DETAIL", "target": task_id, "result": result}]
+        return plan, results, result
+
+    if mentions_task and wants_read:
+        status = _clickup_status_from_text(text)
+        params = {"status": status} if status else {}
+        plan = [{"step": 1, "action": "CLICKUP_GET_TASKS", "params": params, "reason": "Direct read-only intent match"}]
+        result = clickup_get_tasks(status=status)
+        results = [{"step": 1, "action": "CLICKUP_GET_TASKS", "target": status or "all", "result": result}]
+        return plan, results, result
+
+    return None
+
+
 def run_quick(
     user_request: str,
     plan: list[dict],
@@ -443,6 +503,32 @@ def _handle_message_inner(
         return final_response, conv_id, mode, plan, usage
 
     # ── AGENT MODE (QUICK / DEEP) ─────────────────────
+    if mode == MODE_QUICK:
+        fast = try_clickup_fast_path(clean_input)
+        if fast:
+            plan, results, final_response = fast
+            print("\n  [CLICKUP FAST-PATH]")
+            print("  Intent: direct read-only match")
+            print("  Planner/Executor tokens: 0")
+            print(f"  Tool calls: {len(results)}")
+
+            task = create_task(clean_input, plan)
+            task_id = task["id"]
+            for i, result in enumerate(results):
+                update_task_step(task_id, i, result)
+            complete_task(task_id, final_response)
+            update_session_context(conv_id, results)
+            mark_agent_tool_used(conv_id)
+
+            usage = get_usage()
+            add_message(
+                conv_id, "assistant", final_response,
+                mode=mode_label(mode), mode_key=mode, plan=plan, usage=usage
+            )
+            trigger_message_count(conv_id)
+            cleanup_completed()
+            return final_response, conv_id, mode, plan, usage
+
     plan_input = _inject_session_context(clean_input, conv_id)
     plan_result, raw_plan = create_plan(plan_input, project_index, model=model)
 
