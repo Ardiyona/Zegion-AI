@@ -40,6 +40,15 @@ from agents.usage import record_usage
 logger = logging.getLogger(__name__)
 
 
+def _emit_status(status_callback, text: str) -> None:
+    if not status_callback:
+        return
+    try:
+        status_callback(text)
+    except Exception as e:
+        logger.debug("[status] callback failed: %s", e)
+
+
 # =========================
 # CONFIG
 # =========================
@@ -288,6 +297,7 @@ def _first_tool_only(ai_response: str) -> str:
 
 def _handle_tools(
     ai_response: str,
+    status_callback=None,
 ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
     """
     Parse full (non-partial) AI response and execute the LAST matching tool.
@@ -295,6 +305,9 @@ def _handle_tools(
     Must only be called after _stream_chat() completes without cancel/error.
     Returns: (tool_used, tool_name, tool_target, result)
     """
+    preview = re.search(r'\[([A-Z_]+)', ai_response)
+    if preview and preview.group(1) not in ("DONE", "RESPOND"):
+        _emit_status(status_callback, f"Menjalankan tool {preview.group(1)}...")
 
     # READ FILE
     m = _find_last(r'\[READ_FILE path="(.*?)"\]', ai_response)
@@ -520,6 +533,7 @@ def execute_plan(
     conv_id: Optional[str] = None,
     model: Optional[str] = None,
     user_request: str = "",
+    status_callback=None,
 ) -> tuple[list[dict], str]:
     """
     Executor AI Agent — mengerjakan plan dengan kemampuan berpikir.
@@ -571,6 +585,7 @@ def execute_plan(
 
     for step in range(MAX_EXECUTOR_STEPS):
 
+        _emit_status(status_callback, "Memilih tool berikutnya...")
         print(f"\n  🤖 Executor (step {step + 1}):")
 
         # Log context size before each step
@@ -700,6 +715,7 @@ def execute_plan(
                 if extra_fields:
                     # Execute update DIRECTLY with only allowed fields (bypass f-string reconstruction)
                     tid = update_match.group(1)
+                    _emit_status(status_callback, "Menjalankan tool CLICKUP_UPDATE_TASK...")
                     print(f"    ⚠️  FIELD GUARD: stripped fields {extra_fields}, keeping {allowed_fields & included_fields}")
                     tool_result = clickup_smart_update_task(
                         tid,
@@ -768,7 +784,7 @@ def execute_plan(
             exec_text = _inject_verbatim(exec_text)
 
         # ── Now execute with (possibly cleaned) text ──
-        tool_used, tool_name, tool_target, tool_result = _handle_tools(exec_text)
+        tool_used, tool_name, tool_target, tool_result = _handle_tools(exec_text, status_callback=status_callback)
 
         # ── GUARD: Tolak WRITE_FILE jika user tidak minta file ──
         if tool_used and tool_name == "WRITE_FILE" and not _user_wants_file(user_request):
@@ -891,6 +907,7 @@ def generate_response(
     results: list[dict],
     conv_id: Optional[str] = None,
     model: Optional[str] = None,
+    status_callback=None,
 ) -> str:
     """
     Phase 4: Responder — generate final answer from execution results.
@@ -917,6 +934,7 @@ def generate_response(
 
     context = "\n\n".join(context_parts)
     resp_model = model or DEFAULT_MODEL
+    _emit_status(status_callback, "Menyusun jawaban...")
     print("\n  🤖 Responder generating answer...")
 
     resp_messages = [

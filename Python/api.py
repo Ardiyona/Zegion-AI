@@ -381,18 +381,34 @@ async def websocket_chat(websocket: WebSocket, conv_id: str):
 
             print(f"[WS] [{conv_id[:8]}] User: {user_input[:120]}")
 
-            await websocket.send_json({"type": "thinking"})
+            await websocket.send_json({"type": "thinking", "text": "Memproses pesan..."})
 
             loop = asyncio.get_event_loop()
+            status_queue: asyncio.Queue[str] = asyncio.Queue()
+
+            def status_callback(text: str) -> None:
+                loop.call_soon_threadsafe(status_queue.put_nowait, text)
+
             try:
-                response, new_conv_id, mode, plan, usage = await loop.run_in_executor(
+                future = loop.run_in_executor(
                     None,
-                    handle_message,
-                    user_input,
-                    conv_id,
-                    _state["project_index"],
-                    _state["model"],
+                    lambda: handle_message(
+                        user_input,
+                        conv_id,
+                        _state["project_index"],
+                        _state["model"],
+                        status_callback=status_callback,
+                    ),
                 )
+                while not future.done():
+                    try:
+                        text = await asyncio.wait_for(status_queue.get(), timeout=0.1)
+                        await websocket.send_json({"type": "status", "text": text})
+                    except asyncio.TimeoutError:
+                        pass
+                while not status_queue.empty():
+                    await websocket.send_json({"type": "status", "text": status_queue.get_nowait()})
+                response, new_conv_id, mode, plan, usage = await future
             except Exception as e:
                 print(f"[WS] Error: {e}")
                 await websocket.send_json({"type": "error", "text": str(e)})

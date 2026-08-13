@@ -8,6 +8,7 @@ export function useChat() {
   const [activeConvId, setActiveConvId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [isThinking, setIsThinking] = useState(false);
+  const [thinkingStatus, setThinkingStatus] = useState('Berpikir...');
   const [wsStatus, setWsStatus] = useState('connecting');
   const [pendingNewChat, setPendingNewChat] = useState(false);
 
@@ -66,6 +67,7 @@ export function useChat() {
       if (lastMsg?.role === 'assistant') {
         stopPolling();
         setIsThinking(false);
+        setThinkingStatus('Berpikir...');
         fetchConversations();
         setMessages((prev) => {
           const lastPrev = prev[prev.length - 1];
@@ -95,6 +97,7 @@ export function useChat() {
     activeConvIdRef.current = null;
     setMessages([]);
     setIsThinking(false);
+    setThinkingStatus('Berpikir...');
     setPendingNewChat(true);
     pendingNewChatRef.current = true;
     setWsStatus('ready');
@@ -128,9 +131,11 @@ export function useChat() {
       setMessages(msgs);
       if (hasPendingMessage(msgs)) {
         setIsThinking(true);
+        setThinkingStatus('Memproses pesan...');
         startPolling(convId);
       } else {
         setIsThinking(false);
+        setThinkingStatus('Berpikir...');
         stopPolling();
       }
     };
@@ -141,6 +146,13 @@ export function useChat() {
 
         if (data.type === 'thinking') {
           setIsThinking(true);
+          setThinkingStatus(data.text || 'Berpikir...');
+          return;
+        }
+
+        if (data.type === 'status') {
+          setIsThinking(true);
+          setThinkingStatus(data.text || 'Berpikir...');
           return;
         }
 
@@ -154,6 +166,7 @@ export function useChat() {
 
         if (data.type === 'cancelled') {
           setIsThinking(false);
+          setThinkingStatus('Berpikir...');
           stopPolling();
           setMessages((prev) => {
             const last = prev[prev.length - 1];
@@ -169,6 +182,7 @@ export function useChat() {
         }
 
         setIsThinking(false);
+        setThinkingStatus('Berpikir...');
         stopPolling();
 
         if (data.type === 'response') {
@@ -216,6 +230,7 @@ export function useChat() {
     activeConvIdRef.current = convId;
     setMessages([]);
     setIsThinking(false);
+    setThinkingStatus('Berpikir...');
 
     const msgs = await fetchMessages(convId);
     setMessages(msgs);
@@ -234,6 +249,7 @@ export function useChat() {
     activeConvIdRef.current = null;
     setMessages([]);
     setIsThinking(false);
+    setThinkingStatus('Berpikir...');
     setPendingNewChat(true);
     pendingNewChatRef.current = true;
     pendingMessageRef.current = null;
@@ -266,6 +282,7 @@ export function useChat() {
 
     cancelledConvsRef.current.add(convId);
     setIsThinking(false);
+    setThinkingStatus('Berpikir...');
     stopPolling();
     setMessages((prev) => {
       const last = prev[prev.length - 1];
@@ -295,6 +312,7 @@ export function useChat() {
       pendingMessageRef.current = text;
       setMessages([{ role: 'user', content: text, created_at: Date.now() / 1000 }]);
       setIsThinking(true);
+      setThinkingStatus('Memproses pesan...');
       try {
         const res = await apiFetch(`/conversations`, { method: 'POST' });
         const conv = await res.json();
@@ -307,6 +325,7 @@ export function useChat() {
       } catch (e) {
         console.error('[API] create conversation failed:', e);
         setIsThinking(false);
+        setThinkingStatus('Berpikir...');
         setMessages([]);
         pendingMessageRef.current = null;
       }
@@ -320,6 +339,7 @@ export function useChat() {
       ...prev,
       { role: 'user', content: text, created_at: Date.now() / 1000 },
     ]);
+    setThinkingStatus('Memproses pesan...');
     wsRef.current.send(JSON.stringify({ message: text }));
   }, [wsStatus, connectWs]);
 
@@ -353,6 +373,7 @@ export function useChat() {
     activeConvId,
     messages,
     isThinking,
+    thinkingStatus,
     wsStatus,
     pendingNewChat,
     sendMessage,

@@ -11,7 +11,7 @@ const AGENT_NAME = 'Zegion';
 const AGENT_VERSION = '1.0';
 
 function ChatPage({ chat, activeModel }) {
-  const { conversations, activeConvId, messages, isThinking, wsStatus, pendingNewChat, sendMessage, stopExecution } = chat;
+  const { conversations, activeConvId, messages, isThinking, thinkingStatus, wsStatus, pendingNewChat, sendMessage, stopExecution } = chat;
   const activeConv = conversations.find(c => c.id === activeConvId);
   const lastMsg = messages.filter(m => m.role === 'assistant').slice(-1)[0];
   const lastModeKey = lastMsg?.mode_key;
@@ -36,6 +36,7 @@ function ChatPage({ chat, activeModel }) {
       <MessageList
         messages={messages}
         isThinking={isThinking}
+        thinkingStatus={thinkingStatus}
         onSuggestion={sendMessage}
       />
       <ChatInput

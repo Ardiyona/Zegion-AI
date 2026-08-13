@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-function ThinkingBubble() {
+function ThinkingBubble({ status }) {
   return (
     <div className="message assistant">
       <div className="message-avatar">🤖</div>
@@ -9,7 +9,7 @@ function ThinkingBubble() {
           <div className="thinking-dots">
             <span /><span /><span />
           </div>
-          <span>Berpikir...</span>
+          <span className="thinking-status">{status || 'Berpikir...'}</span>
         </div>
       </div>
     </div>
@@ -106,12 +106,12 @@ function WelcomeScreen({ onSuggestion }) {
   );
 }
 
-export function MessageList({ messages, isThinking, onSuggestion }) {
+export function MessageList({ messages, isThinking, thinkingStatus, onSuggestion }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isThinking]);
+  }, [messages, isThinking, thinkingStatus]);
 
   if (messages.length === 0 && !isThinking) {
     return (
@@ -126,7 +126,7 @@ export function MessageList({ messages, isThinking, onSuggestion }) {
       {messages.map((msg, i) => (
         <MessageBubble key={i} msg={msg} />
       ))}
-      {isThinking && <ThinkingBubble />}
+      {isThinking && <ThinkingBubble status={thinkingStatus} />}
       <div ref={bottomRef} />
     </div>
   );

@@ -746,6 +746,13 @@ body {
   font-size: 13px;
 }
 
+.thinking-status {
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .thinking-dots {
   display: flex;
   gap: 4px;

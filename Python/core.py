@@ -79,6 +79,15 @@ from db import (
 logger = logging.getLogger(__name__)
 
 
+def _emit_status(status_callback, text: str) -> None:
+    if not status_callback:
+        return
+    try:
+        status_callback(text)
+    except Exception as e:
+        logger.debug("[status] callback failed: %s", e)
+
+
 # =========================
 # SESSION CONTEXT
 # Tracks last tool-touched entity per conv_id — in-memory, resets on restart.
@@ -308,9 +317,13 @@ def run_quick(
     project_index: str = "",
     conv_id: Optional[str] = None,
     model: str = DEFAULT_MODEL,
+    status_callback=None,
 ) -> str:
     """Quick Mode: Planner → Executor → (Responder jika perlu)."""
-    results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
+    results, exec_response = execute_plan(
+        plan, task_id=task_id, conv_id=conv_id, model=model,
+        user_request=user_request, status_callback=status_callback,
+    )
     if conv_id:
         update_session_context(conv_id, results)
         trigger_executor_success(conv_id, results)
@@ -325,7 +338,8 @@ def run_quick(
     else:
         has_tools = any(r.get("action") not in ("RESPOND", "DONE") for r in results)
         if has_tools:
-            final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
+            _emit_status(status_callback, "Menyusun jawaban...")
+            final_response = generate_response(user_request, results, conv_id=conv_id, model=model, status_callback=status_callback)
             if pop_was_cancelled(conv_id):
                 return ""
         elif exec_response:
@@ -344,6 +358,7 @@ def run_deep(
     project_index: str = "",
     conv_id: Optional[str] = None,
     model: str = DEFAULT_MODEL,
+    status_callback=None,
 ) -> str:
     """Deep Mode: Planner → Executor → Critic → Reflection → Responder."""
     results: list[dict] = []
@@ -353,7 +368,10 @@ def run_deep(
         if attempt > 0:
             print(f"\nCritic retry {attempt}/{MAX_CRITIC_RETRIES}...")
 
-        results, exec_response = execute_plan(plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
+        results, exec_response = execute_plan(
+            plan, task_id=task_id, conv_id=conv_id, model=model,
+            user_request=user_request, status_callback=status_callback,
+        )
         if conv_id:
             update_session_context(conv_id, results)
             trigger_executor_success(conv_id, results)
@@ -373,6 +391,7 @@ def run_deep(
                 new_plan, _ = create_plan(fix_prompt, project_index, model=model)
                 if new_plan:
                     plan = new_plan
+                    _emit_status(status_callback, "Menyusun rencana perbaikan...")
                 else:
                     break
             else:
@@ -386,7 +405,11 @@ def run_deep(
             improve_prompt = f"{user_request}\n\n[REFLECTION]: {suggestions}"
             new_plan, _ = create_plan(improve_prompt, project_index, model=model)
             if new_plan:
-                results, exec_response = execute_plan(new_plan, task_id=task_id, conv_id=conv_id, model=model, user_request=user_request)
+                _emit_status(status_callback, "Menjalankan rencana perbaikan...")
+                results, exec_response = execute_plan(
+                    new_plan, task_id=task_id, conv_id=conv_id, model=model,
+                    user_request=user_request, status_callback=status_callback,
+                )
                 if pop_was_cancelled(conv_id):
                     return ""
 
@@ -397,7 +420,8 @@ def run_deep(
         print("\n  ⚡ Skipping Responder (direct response mode)")
         final_response = exec_response
     elif has_tools:
-        final_response = generate_response(user_request, results, conv_id=conv_id, model=model)
+        _emit_status(status_callback, "Menyusun jawaban...")
+        final_response = generate_response(user_request, results, conv_id=conv_id, model=model, status_callback=status_callback)
         if pop_was_cancelled(conv_id):
             return ""
     elif exec_response:
@@ -426,6 +450,7 @@ def handle_message(
     conv_id: str,
     project_index: str = "",
     model: str = DEFAULT_MODEL,
+    status_callback=None,
 ) -> tuple[Optional[str], str, str, list, dict]:
     """
     Handle 1 pesan user — routing ke mode yang tepat.
@@ -437,7 +462,7 @@ def handle_message(
     start_usage(model)
     mark_request_start()
     try:
-        return _handle_message_inner(user_input, conv_id, project_index, model)
+        return _handle_message_inner(user_input, conv_id, project_index, model, status_callback)
     finally:
         mark_request_done()
         clear_usage()
@@ -448,6 +473,7 @@ def _handle_message_inner(
     conv_id: str,
     project_index: str = "",
     model: str = DEFAULT_MODEL,
+    status_callback=None,
 ) -> tuple[Optional[str], str, str, list, dict]:
     if not conv_id or not get_conversation(conv_id):
         conv = create_conversation()
@@ -480,6 +506,7 @@ def _handle_message_inner(
     forced_mode, clean_input = parse_override(user_input)
     auto_mode = detect_mode(clean_input)
     mode = forced_mode if forced_mode else auto_mode
+    _emit_status(status_callback, f"Mode {mode_label(mode)} aktif...")
     plan: list = []
 
     user_msg = add_message(conv_id, "user", clean_input)
@@ -493,6 +520,7 @@ def _handle_message_inner(
     # ── CHAT MODE ─────────────────────────────────────
     if mode == MODE_CHAT:
         clear_cancel(conv_id)
+        _emit_status(status_callback, "Menyusun jawaban...")
         final_response = run_chat(clean_input, conv_id, model=model)
         if final_response is None or pop_was_cancelled(conv_id) or is_cancelled(conv_id):
             clear_cancel(conv_id)
@@ -507,6 +535,7 @@ def _handle_message_inner(
         fast = try_clickup_fast_path(clean_input)
         if fast:
             plan, results, final_response = fast
+            _emit_status(status_callback, "Mengambil data ClickUp...")
             print("\n  [CLICKUP FAST-PATH]")
             print("  Intent: direct read-only match")
             print("  Planner/Executor tokens: 0")
@@ -530,6 +559,7 @@ def _handle_message_inner(
             return final_response, conv_id, mode, plan, usage
 
     plan_input = _inject_session_context(clean_input, conv_id)
+    _emit_status(status_callback, "Menyusun rencana...")
     plan_result, raw_plan = create_plan(plan_input, project_index, model=model)
 
     if not plan_result:
@@ -544,10 +574,11 @@ def _handle_message_inner(
     clear_cancel(conv_id)
     mark_agent_tool_used(conv_id)
 
+    _emit_status(status_callback, "Menjalankan rencana...")
     if mode == MODE_DEEP:
-        final_response = run_deep(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model)
+        final_response = run_deep(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model, status_callback=status_callback)
     else:
-        final_response = run_quick(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model)
+        final_response = run_quick(clean_input, plan, task_id, project_index, conv_id=conv_id, model=model, status_callback=status_callback)
 
     # Cancelled — jangan simpan ke DB, hapus user message yang sudah tersimpan
     if pop_was_cancelled(conv_id) or is_cancelled(conv_id) or not final_response:

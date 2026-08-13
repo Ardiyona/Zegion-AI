@@ -16,7 +16,7 @@ import time
 from typing import Optional
 
 from ollama import chat as _ollama_chat
-from config import SUMMARY_MODEL
+from config import SUMMARY_MODEL, SUMMARY_NUM_CTX
 from db import (
     get_conversation,
     get_messages,
@@ -60,16 +60,29 @@ _has_used_agent_tool: dict[str, bool] = {}
 _MESSAGE_THRESHOLD_WITH_TOOLS = 5
 _MESSAGE_THRESHOLD_CHAT_ONLY  = 20
 
-_SUMMARY_SYSTEM_PROMPT = """You are a conversation summarizer. Output ONLY valid JSON. No explanation, no markdown.
+_WORK_SUMMARY_SYSTEM_PROMPT = """You are a conversation summarizer. Output ONLY valid JSON. No explanation, no markdown.
 
-Extract from the conversation:
+Extract durable project/work memory from the conversation:
 - tasks_touched: list of ClickUp task IDs mentioned or acted on
 - actions: list of concrete actions taken (e.g. "updated status of 86abc to in progress")
-- key_decisions: list of decisions or conclusions reached
-- user_info_detected: list of facts about the user (preferences, tech stack, role, projects) — empty list if none detected
+- key_decisions: list of technical/product decisions or conclusions reached
+
+Exclude user preferences, identity, communication style, temporary chat, guesses, and duplicates.
 
 Output format (strict JSON, no extra text):
-{"tasks_touched": [], "actions": [], "key_decisions": [], "user_info_detected": []}"""
+{"tasks_touched": [], "actions": [], "key_decisions": []}"""
+
+_USER_INFO_SYSTEM_PROMPT = """You are a user profile extractor. Output ONLY valid JSON. No explanation, no markdown.
+
+Extract only durable facts about the user:
+- stable preferences
+- identity or role
+- long-term instructions
+
+Exclude project decisions, code actions, temporary requests, assistant actions, guesses, and duplicates. If unsure, return an empty list.
+
+Output format (strict JSON, no extra text):
+{"user_info_detected": []}"""
 
 
 def _parse_summary_json(raw: str) -> Optional[dict]:
@@ -84,6 +97,116 @@ def _parse_summary_json(raw: str) -> Optional[dict]:
         if isinstance(obj, dict):
             return obj
     return None
+
+
+def _ensure_list_of_strings(value, *, max_items: int = 20, max_len: int = 300) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    result = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = " ".join(item.split())[:max_len]
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        result.append(text)
+        seen.add(key)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _normalize_work_summary(summary: dict) -> dict:
+    return {
+        "tasks_touched": _ensure_list_of_strings(summary.get("tasks_touched")),
+        "actions": _ensure_list_of_strings(summary.get("actions")),
+        "key_decisions": _ensure_list_of_strings(summary.get("key_decisions")),
+        "user_info_detected": [],
+    }
+
+
+_PROJECT_WORK_TERMS = (
+    "updated",
+    "fixed",
+    "implemented",
+    "created task",
+    "added comment",
+    "changed status",
+    "refactored",
+    "deployed",
+    "clickup",
+    "middleware",
+    "sudah mengubah",
+    "sudah memperbaiki",
+    "menambahkan komentar",
+)
+
+
+def _normalize_user_info(summary: dict) -> list[str]:
+    items = _ensure_list_of_strings(summary.get("user_info_detected"), max_items=10)
+    result = []
+    for item in items:
+        item_lower = item.lower()
+        if any(term in item_lower for term in _PROJECT_WORK_TERMS):
+            continue
+        result.append(item)
+    return result
+
+
+_USER_INFO_SIGNALS = (
+    "remember",
+    "ingat",
+    "prefer",
+    "saya lebih suka",
+    "jangan",
+    "selalu",
+    "panggil saya",
+    "my role",
+    "i work as",
+    "gunakan bahasa",
+    "jawab dengan",
+)
+
+
+def _should_extract_user_info(conv_text: str) -> bool:
+    text = conv_text.lower()
+    return any(signal in text for signal in _USER_INFO_SIGNALS)
+
+
+def _chat_json(system_prompt: str, user_prompt: str) -> Optional[dict]:
+    response = _ollama_chat(
+        model=SUMMARY_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        options={"temperature": 0, "num_ctx": SUMMARY_NUM_CTX},
+    )
+    raw = response["message"]["content"].strip()
+    summary = _parse_summary_json(raw)
+    if summary is None:
+        logger.warning("[summarizer] invalid JSON summary, retrying once: %s", raw[:100])
+        response = _ollama_chat(
+            model=SUMMARY_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": (
+                    "Your previous response was not valid JSON. "
+                    "Respond with the JSON object only, starting with { and ending with }. "
+                    "Do not add new content.\n\n"
+                    f"Input:\n{user_prompt}"
+                )},
+            ],
+            options={"temperature": 0, "num_ctx": SUMMARY_NUM_CTX},
+        )
+        raw = response["message"]["content"].strip()
+        summary = _parse_summary_json(raw)
+    return summary
 
 
 def _build_conversation_text(conv_id: str, limit: int = 30) -> str:
@@ -112,46 +235,29 @@ def _run_summary(conv_id: str, reason: str) -> Optional[dict]:
         return None
 
     try:
-        response = _ollama_chat(
-            model=SUMMARY_MODEL,
-            messages=[
-                {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Summarize this conversation:\n\n{conv_text}"},
-            ],
-            options={"temperature": 0, "num_ctx": 4096},
+        work_raw = _chat_json(
+            _WORK_SUMMARY_SYSTEM_PROMPT,
+            f"Summarize project/work memory from this conversation:\n\n{conv_text}",
         )
-        raw = response["message"]["content"].strip()
-        summary = _parse_summary_json(raw)
-
-        if summary is None:
-            logger.warning("[summarizer] invalid JSON summary, retrying once: %s", raw[:100])
-            response = _ollama_chat(
-                model=SUMMARY_MODEL,
-                messages=[
-                    {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
-                    {"role": "user", "content": (
-                        "Your previous response was not valid JSON. "
-                        "Respond with the JSON object only, starting with { and ending with }.\n\n"
-                        f"Conversation:\n{conv_text}"
-                    )},
-                ],
-                options={"temperature": 0, "num_ctx": 4096},
-            )
-            raw = response["message"]["content"].strip()
-            summary = _parse_summary_json(raw)
-
-        if summary is None:
-            logger.warning("[summarizer] failed to parse JSON summary after retry: %s", raw[:100])
+        if work_raw is None:
+            logger.warning("[summarizer] failed to parse work summary after retry")
             return None
+
+        summary = _normalize_work_summary(work_raw)
+
+        if _should_extract_user_info(conv_text):
+            user_raw = _chat_json(
+                _USER_INFO_SYSTEM_PROMPT,
+                f"Extract durable user facts from this conversation:\n\n{conv_text}",
+            )
+            if user_raw is None:
+                logger.warning("[summarizer] failed to parse user_info summary after retry")
+            else:
+                summary["user_info_detected"] = _normalize_user_info(user_raw)
 
     except Exception as e:
         logger.error("[summarizer] model error: %s", e)
         return None
-
-    # Validate expected keys
-    for key in ("tasks_touched", "actions", "key_decisions", "user_info_detected"):
-        if key not in summary:
-            summary[key] = []
 
     _persist_summary(conv_id, conv.get("title", conv_id), summary, reason)
     return summary
