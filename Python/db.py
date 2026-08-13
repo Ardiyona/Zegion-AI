@@ -425,6 +425,76 @@ def kb_delete(entry_id):
         conn.close()
 
 
+def _clean_kb_text(value) -> str:
+    return " ".join(str(value).split()) if isinstance(value, str) else ""
+
+
+def _format_kb_content_for_prompt(content: str) -> list[str]:
+    """Render stored JSON summaries as model-friendly bullets; keep unknown KB raw."""
+    try:
+        data = json.loads(content)
+    except Exception:
+        text = _clean_kb_text(content)
+        return [text] if text else []
+
+    if not isinstance(data, dict):
+        text = _clean_kb_text(content)
+        return [text] if text else []
+
+    lines = []
+    for key, label in (
+        ("tasks_touched", "Task terkait"),
+        ("actions", "Aksi sebelumnya"),
+        ("key_decisions", "Keputusan"),
+        ("user_info_detected", "Info user"),
+    ):
+        value = data.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            text = _clean_kb_text(item)
+            if text:
+                lines.append(f"{label}: {text}")
+
+    profile = data.get("user_profile")
+    if isinstance(profile, dict):
+        if profile.get("name"):
+            lines.append(f"Nama user: {_clean_kb_text(profile['name'])}")
+        if profile.get("role"):
+            lines.append(f"Role user: {_clean_kb_text(profile['role'])}")
+        for key, label in (
+            ("preferences", "Preferensi user"),
+            ("projects", "Project aktif"),
+            ("tech_stack", "Tech stack user"),
+        ):
+            value = profile.get(key)
+            if not isinstance(value, list):
+                continue
+            for item in value:
+                text = _clean_kb_text(item)
+                if text:
+                    lines.append(f"{label}: {text}")
+
+    ltc = data.get("long_term_context")
+    if isinstance(ltc, list):
+        for item in ltc:
+            text = _clean_kb_text(item)
+            if text:
+                lines.append(f"Konteks jangka panjang: {text}")
+
+    if lines:
+        return lines
+
+    text = _clean_kb_text(content)
+    return [text] if text else []
+
+
+def _append_kb_prompt_lines(lines: list[str], content: str, is_corrected: int) -> None:
+    marker = "[VERIFIED] " if is_corrected else ""
+    for item in _format_kb_content_for_prompt(content):
+        lines.append(f"- {marker}{item}")
+
+
 def kb_get_context(max_entries=10):
     """
     Ambil KB entries untuk di-inject ke context AI.
@@ -452,8 +522,7 @@ def kb_get_context(max_entries=10):
 
     lines = ["[LONG-TERM KNOWLEDGE]"]
     for row in rows:
-        marker = "[VERIFIED] " if row["is_corrected"] else ""
-        lines.append(f"- {marker}{row['content']}")
+        _append_kb_prompt_lines(lines, row["content"], row["is_corrected"])
     lines.append("[/LONG-TERM KNOWLEDGE]")
 
     return "\n".join(lines)
@@ -516,8 +585,7 @@ def kb_get_relevant(user_input: str, max_entries: int = 5) -> str:
 
     lines = ["[RELEVANT KNOWLEDGE]"]
     for row in top:
-        marker = "[VERIFIED] " if row["is_corrected"] else ""
-        lines.append(f"- {marker}{row['content']}")
+        _append_kb_prompt_lines(lines, row["content"], row["is_corrected"])
     lines.append("[/RELEVANT KNOWLEDGE]")
 
     return "\n".join(lines)

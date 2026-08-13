@@ -1,9 +1,11 @@
+from agents import summarizer as summarizer_module
 from agents.summarizer import (
     _ensure_list_of_strings,
     _normalize_user_info,
     _normalize_work_summary,
     _parse_summary_json,
     _should_extract_user_info,
+    _update_global_user_profile,
 )
 
 
@@ -36,3 +38,17 @@ assert _normalize_user_info({
 
 assert _should_extract_user_info("[USER]: saya prefer jawaban singkat") is True
 assert _should_extract_user_info("[USER]: pakai JWT untuk auth\n[ASSISTANT]: sudah saya ubah middleware") is False
+
+saved_profiles = []
+summarizer_module._load_global_profile = lambda: {
+    "user_profile": {"name": "", "role": "", "preferences": [], "projects": [], "tech_stack": []},
+    "long_term_context": [],
+}
+summarizer_module._save_global_profile = saved_profiles.append
+
+_update_global_user_profile(["User tidak suka Python", "User prefers concise answers"])
+
+assert saved_profiles == [{
+    "user_profile": {"name": "", "role": "", "preferences": [], "projects": [], "tech_stack": []},
+    "long_term_context": ["User tidak suka Python", "User prefers concise answers"],
+}]

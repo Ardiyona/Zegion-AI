@@ -406,57 +406,13 @@ def _merge_list(existing: list, incoming: list) -> list:
     return result
 
 
-# Simple keyword patterns to categorize user_info_detected entries
-_PROFILE_PATTERNS = [
-    (r'\b(name|nama)\b.*?[:\-]\s*(.+)', "name"),
-    (r'\b(role|jabatan|posisi|pekerjaan)\b.*?[:\-]\s*(.+)', "role"),
-    (r'\bprefer.+?([\w\+#\.]+)', "preferences"),
-    (r'\bproject.+?([\w\s]+)', "projects"),
-    (r'\b(uses?|pakai|menggunakan)\b.+?([\w\+#\.]+)', "tech_stack"),
-]
-
-
 def _update_global_user_profile(user_info: list[str]) -> None:
-    """Merge user_info_detected into global KB user profile. Rule-based, no model call."""
+    """Merge durable user facts conservatively; keep full text to avoid keyword misclassification."""
     if not user_info:
         return
 
     profile = _load_global_profile()
-    up = profile["user_profile"]
-    ltc = profile["long_term_context"]
-
-    for info in user_info:
-        info_lower = info.lower()
-        categorized = False
-
-        # Try to categorize into structured fields
-        if any(kw in info_lower for kw in ["prefer", "suka", "favorite", "pakai", "use"]):
-            up["preferences"] = _merge_list(up["preferences"], [info])
-            categorized = True
-        if any(kw in info_lower for kw in ["project", "proyek", "working on", "sedang"]):
-            up["projects"] = _merge_list(up["projects"], [info])
-            categorized = True
-        if any(kw in info_lower for kw in ["python", "go", "javascript", "typescript", "rust",
-                                             "java", "kotlin", "swift", "react", "vue", "django",
-                                             "fastapi", "ollama", "docker", "linux"]):
-            up["tech_stack"] = _merge_list(up["tech_stack"], [info])
-            categorized = True
-        if any(kw in info_lower for kw in ["name", "nama", "saya adalah", "i am", "my name"]):
-            if not up["name"]:
-                up["name"] = info
-            categorized = True
-        if any(kw in info_lower for kw in ["role", "jabatan", "developer", "engineer",
-                                             "designer", "manager", "analyst"]):
-            if not up["role"]:
-                up["role"] = info
-            categorized = True
-
-        # Fallback — store in long_term_context if uncategorized
-        if not categorized:
-            ltc = _merge_list(ltc, [info])
-
-    profile["user_profile"] = up
-    profile["long_term_context"] = ltc
+    profile["long_term_context"] = _merge_list(profile["long_term_context"], user_info)
     _save_global_profile(profile)
     logger.info("[summarizer] global user profile updated")
 
